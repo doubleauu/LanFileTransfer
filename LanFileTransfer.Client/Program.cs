@@ -1,16 +1,13 @@
+// 客户端程序入口，负责启动 WinForms 主窗体。
 namespace LanFileTransfer.Client;
 
-static class Program
+internal static class Program
 {
-    /// <summary>
-    ///  The main entry point for the application.
-    /// </summary>
-    [STAThread]
-    static void Main()
+    [STAThread]  // 指定程序在“单线程单元 STA 模式”运行
+    private static void Main()
     {
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
+        // 初始化 WinForms 默认配置后打开客户端主窗体。
         ApplicationConfiguration.Initialize();
         Application.Run(new Form1());
-    }    
+    }
 }

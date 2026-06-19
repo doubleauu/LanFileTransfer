@@ -1,38 +1,28 @@
-﻿namespace LanFileTransfer.Client;
+// 客户端主窗体的基础设计器代码，保存控件字段和初始化入口。
+namespace LanFileTransfer.Client;
 
 partial class Form1
 {
-    /// <summary>
-    ///  Required designer variable.
-    /// </summary>
-    private System.ComponentModel.IContainer components = null;
+    private System.ComponentModel.IContainer components = null!;
 
-    /// <summary>
-    ///  Clean up any resources being used.
-    /// </summary>
-    /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
     protected override void Dispose(bool disposing)
     {
-        if (disposing && (components != null))
+        // 释放窗体创建的组件资源。
+        if (disposing && components != null)
         {
             components.Dispose();
         }
+
         base.Dispose(disposing);
     }
 
-    #region Windows Form Designer generated code
-
-    /// <summary>
-    ///  Required method for Designer support - do not modify
-    ///  the contents of this method with the code editor.
-    /// </summary>
     private void InitializeComponent()
     {
         components = new System.ComponentModel.Container();
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(800, 450);
-        Text = "Form1";
+        ClientSize = new Size(620, 420);
+        MinimumSize = new Size(620, 420);
+        StartPosition = FormStartPosition.CenterScreen;
+        Text = "局域网文件传输系统 - 客户端";
     }
-
-    #endregion
 }
