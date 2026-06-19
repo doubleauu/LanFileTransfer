@@ -1,6 +1,6 @@
 // 客户端主窗体，提供服务器连接测试和操作日志显示。
 using System.Net.Sockets;
-using System.Text;
+using LanFileTransfer.Common;
 
 namespace LanFileTransfer.Client;
 
@@ -97,30 +97,40 @@ public partial class Form1 : Form
         {
             AppendLog($"正在连接 {serverIp}:{port} ...");
 
+            // using关键字表示使用完自动退释放资源
             using TcpClient client = new();
             await client.ConnectAsync(serverIp, port);
 
             await using NetworkStream stream = client.GetStream();
-            await using StreamWriter writer = new(stream, Encoding.UTF8, leaveOpen: true)
-            {
-                AutoFlush = true
-            };
-            using StreamReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
 
-            // 阶段三只发送一条测试文本，确认 TCP 基础收发正常。
+            // 阶段四改为结构化消息，后续登录、上传、下载都会复用这套协议。
             string testMessage = $"客户端连接测试 {DateTime.Now:HH:mm:ss}";
-            await writer.WriteLineAsync(testMessage);
+            await TcpMessageProtocol.SendAsync(stream, MessageType.TestRequest, new TestMessageDto(testMessage));
             AppendLog($"已发送：{testMessage}");
 
-            string? response = await reader.ReadLineAsync();
-            lblStatus.Text = "状态：连接测试成功";
-            AppendLog($"服务端响应：{response}");
+            ReceivedMessage response = await TcpMessageProtocol.ReceiveAsync(stream);
+            ShowServerResponse(response);
         }
         catch (Exception ex)
         {
             lblStatus.Text = "状态：连接失败";
             AppendLog($"连接失败：{ex.Message}");
         }
+    }
+
+    private void ShowServerResponse(ReceivedMessage response)
+    {
+        if (response.Type == MessageType.TestResponse)
+        {
+            TestMessageDto? body = response.ReadBody<TestMessageDto>();
+            lblStatus.Text = "状态：连接测试成功";
+            AppendLog($"服务端响应：{body?.Content}");
+            return;
+        }
+
+        ErrorResponseDto? error = response.ReadBody<ErrorResponseDto>();
+        lblStatus.Text = "状态：服务端返回错误";
+        AppendLog($"服务端错误：{error?.Message}");
     }
 
     private void AppendLog(string message)

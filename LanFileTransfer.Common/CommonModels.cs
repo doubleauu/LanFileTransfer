@@ -4,6 +4,8 @@ namespace LanFileTransfer.Common;
 // 消息类型用于区分客户端和服务端之间的业务请求或响应。
 public enum MessageType
 {
+    TestRequest,
+    TestResponse,
     LoginRequest,
     LoginResponse,
     RegisterRequest,
@@ -119,6 +121,9 @@ public sealed record TransferRecordResponseDto(
     bool Success,
     string Message,
     IReadOnlyList<TransferRecordItemDto> Records);
+
+// 连接测试使用的简单消息体。
+public sealed record TestMessageDto(string Content);
 
 // 通用响应和错误响应，适合简单结果提示。
 public sealed record ResponseDto(

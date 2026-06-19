@@ -1,7 +1,7 @@
 // 服务端程序入口，负责启动基础 TCP 监听并返回测试响应。
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
+using LanFileTransfer.Common;
 
 namespace LanFileTransfer.Server;
 
@@ -44,17 +44,23 @@ internal class Program
         try
         {
             await using NetworkStream stream = client.GetStream();
-            using StreamReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
-            await using StreamWriter writer = new(stream, Encoding.UTF8, leaveOpen: true)
+            ReceivedMessage message = await TcpMessageProtocol.ReceiveAsync(stream);
+
+            // 阶段四先支持连接测试消息，后续业务请求继续走同一协议。
+            if (message.Type == MessageType.TestRequest)
             {
-                AutoFlush = true
-            };
+                TestMessageDto? request = message.ReadBody<TestMessageDto>();
+                Console.WriteLine($"收到 {clientAddress} 测试消息：{request?.Content}");
 
-            // 阶段三只验证简单文本消息，后续阶段再替换为统一通信协议。
-            string? message = await reader.ReadLineAsync();
-            Console.WriteLine($"收到 {clientAddress} 消息：{message}");
-
-            await writer.WriteLineAsync($"服务端已收到：{message}");
+                TestMessageDto response = new($"服务端已收到：{request?.Content}");
+                await TcpMessageProtocol.SendAsync(stream, MessageType.TestResponse, response);
+            }
+            else
+            {
+                Console.WriteLine($"收到暂不支持的消息类型：{message.Type}");
+                ErrorResponseDto response = new("服务端暂不支持该消息类型。", message.Type.ToString());
+                await TcpMessageProtocol.SendAsync(stream, MessageType.ErrorResponse, response);
+            }
         }
         catch (Exception ex)
         {
