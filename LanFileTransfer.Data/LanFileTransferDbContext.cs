@@ -22,8 +22,8 @@ public class LanFileTransferDbContext : DbContext
     {
         // 用户名必须唯一，避免注册重复账号。
         modelBuilder.Entity<User>()
-            .HasIndex(user => user.Username)
-            .IsUnique();
+            .HasIndex(user => user.Username)  // 为用户名子段建立索引，加快查询速度，不需要全表扫描
+            .IsUnique();  // 唯一性字段约束
 
         modelBuilder.Entity<User>()
             .Property(user => user.Username)
@@ -71,7 +71,7 @@ public class User
 {
     public int Id { get; set; }
 
-    public string Username { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;  // 初始化为空字符串
 
     public string PasswordHash { get; set; } = string.Empty;
 

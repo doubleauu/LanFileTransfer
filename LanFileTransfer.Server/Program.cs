@@ -1,6 +1,8 @@
 // 服务端程序入口，负责启动基础 TCP 监听并返回测试响应。
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
 using LanFileTransfer.Common;
 using LanFileTransfer.Data;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +12,7 @@ namespace LanFileTransfer.Server;
 internal class Program
 {
     private const int DefaultPort = 5000;  // 默认监听5000端口
+    private static readonly string DatabasePath = Path.Combine(AppContext.BaseDirectory, "LanFileTransfer.db");
 
     private static async Task Main(string[] args)
     {
@@ -31,17 +34,21 @@ internal class Program
 
     private static void InitializeDatabase()
     {
-        string databasePath = Path.Combine(AppContext.BaseDirectory, "LanFileTransfer.db");
-        DbContextOptions<LanFileTransferDbContext> options = new DbContextOptionsBuilder<LanFileTransferDbContext>()
-            .UseSqlite($"Data Source={databasePath}")
-            .Options;
-
         // 作业项目早期先用 EnsureCreated 快速生成表结构，后续需要迁移时再改为 Migrations。
-        using LanFileTransferDbContext dbContext = new(options);
+        using LanFileTransferDbContext dbContext = CreateDbContext();
         dbContext.Database.EnsureCreated();
         VerifyDatabaseReadWrite(dbContext);
 
-        Console.WriteLine($"数据库已就绪：{databasePath}");
+        Console.WriteLine($"数据库已就绪：{DatabasePath}");
+    }
+
+    private static LanFileTransferDbContext CreateDbContext()
+    {
+        DbContextOptions<LanFileTransferDbContext> options = new DbContextOptionsBuilder<LanFileTransferDbContext>()
+            .UseSqlite($"Data Source={DatabasePath}")
+            .Options;
+
+        return new LanFileTransferDbContext(options);
     }
 
     private static void VerifyDatabaseReadWrite(LanFileTransferDbContext dbContext)
@@ -87,7 +94,6 @@ internal class Program
             await using NetworkStream stream = client.GetStream();
             ReceivedMessage message = await TcpMessageProtocol.ReceiveAsync(stream);
 
-            // 阶段四先支持连接测试消息，后续业务请求继续走同一协议。
             if (message.Type == MessageType.TestRequest)
             {
                 TestMessageDto? request = message.ReadBody<TestMessageDto>();
@@ -95,6 +101,16 @@ internal class Program
 
                 TestMessageDto response = new($"服务端已收到：{request?.Content}");
                 await TcpMessageProtocol.SendAsync(stream, MessageType.TestResponse, response);
+            }
+            else if (message.Type == MessageType.RegisterRequest)
+            {
+                RegisterResponseDto response = await HandleRegisterAsync(message);
+                await TcpMessageProtocol.SendAsync(stream, MessageType.RegisterResponse, response);
+            }
+            else if (message.Type == MessageType.LoginRequest)
+            {
+                LoginResponseDto response = await HandleLoginAsync(message);
+                await TcpMessageProtocol.SendAsync(stream, MessageType.LoginResponse, response);
             }
             else
             {
@@ -112,5 +128,64 @@ internal class Program
             client.Close();
             Console.WriteLine($"客户端已断开：{clientAddress}");
         }
+    }
+
+    private static async Task<RegisterResponseDto> HandleRegisterAsync(ReceivedMessage message)
+    {
+        RegisterRequestDto? request = message.ReadBody<RegisterRequestDto>();
+        if (request == null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return new RegisterResponseDto(false, "用户名和密码不能为空。", null);
+        }
+
+        string username = request.Username.Trim();
+        await using LanFileTransferDbContext dbContext = CreateDbContext();
+
+        if (await dbContext.Users.AnyAsync(user => user.Username == username))
+        {
+            return new RegisterResponseDto(false, "用户名已存在。", null);
+        }
+
+        User user = new()
+        {
+            Username = username,
+            PasswordHash = HashPassword(request.Password)
+        };
+
+        dbContext.Users.Add(user);
+        await dbContext.SaveChangesAsync();
+        Console.WriteLine($"用户注册成功：{username}");
+
+        return new RegisterResponseDto(true, "注册成功。", user.Id);
+    }
+
+    private static async Task<LoginResponseDto> HandleLoginAsync(ReceivedMessage message)
+    {
+        LoginRequestDto? request = message.ReadBody<LoginRequestDto>();
+        if (request == null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return new LoginResponseDto(false, "用户名和密码不能为空。", null, null);
+        }
+
+        string username = request.Username.Trim();
+        string passwordHash = HashPassword(request.Password);
+
+        await using LanFileTransferDbContext dbContext = CreateDbContext();
+        User? user = await dbContext.Users.FirstOrDefaultAsync(item => item.Username == username);
+
+        if (user == null || user.PasswordHash != passwordHash)
+        {
+            return new LoginResponseDto(false, "用户名或密码错误。", null, null);
+        }
+
+        Console.WriteLine($"用户登录成功：{username}");
+        return new LoginResponseDto(true, "登录成功。", user.Id, user.Username);
+    }
+
+    private static string HashPassword(string password)
+    {
+        // 课程项目先用 SHA256 保存密码哈希，避免数据库里直接保存明文密码。
+        byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(password));
+        return Convert.ToHexString(bytes);
     }
 }
