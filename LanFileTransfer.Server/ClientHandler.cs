@@ -47,6 +47,11 @@ internal static class ClientHandler
                 UploadResponseDto response = await HandleUploadAsync(message, stream, clientAddress);
                 await TcpMessageProtocol.SendAsync(stream, MessageType.UploadResponse, response);
             }
+            else if (message.Type == MessageType.FileListRequest)
+            {
+                FileListResponseDto response = await HandleFileListAsync(message);
+                await TcpMessageProtocol.SendAsync(stream, MessageType.FileListResponse, response);
+            }
             else
             {
                 Console.WriteLine($"收到暂不支持的消息类型：{message.Type}");
@@ -63,6 +68,37 @@ internal static class ClientHandler
             client.Close();
             Console.WriteLine($"客户端已断开：{clientAddress}");
         }
+    }
+
+    // 查询服务端已保存的文件列表，返回给客户端表格展示。
+    private static async Task<FileListResponseDto> HandleFileListAsync(ReceivedMessage message)
+    {
+        FileListRequestDto? request = message.ReadBody<FileListRequestDto>();
+        if (request == null || request.UserId <= 0)
+        {
+            return new FileListResponseDto(false, "请先登录后再刷新文件列表。", Array.Empty<FileListItemDto>());
+        }
+
+        await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
+        bool userExists = await dbContext.Users.AnyAsync(user => user.Id == request.UserId);
+        if (!userExists)
+        {
+            return new FileListResponseDto(false, "当前用户不存在，请重新登录。", Array.Empty<FileListItemDto>());
+        }
+
+        List<FileListItemDto> files = await dbContext.FileRecords
+            .Include(file => file.Uploader)
+            .OrderByDescending(file => file.UploadedAt)
+            .Select(file => new FileListItemDto(
+                file.Id,
+                file.OriginalFileName,
+                file.FileSize,
+                file.ResourceType,
+                file.Uploader == null ? "未知用户" : file.Uploader.Username,
+                file.UploadedAt))
+            .ToListAsync();
+
+        return new FileListResponseDto(true, "文件列表刷新成功。", files);
     }
 
     // 处理用户注册请求，检查重名后保存新用户。

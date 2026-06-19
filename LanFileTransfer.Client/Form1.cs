@@ -14,9 +14,11 @@ public partial class Form1 : Form
     private readonly Button btnLogin = new();
     private readonly Button btnRegister = new();
     private readonly Button btnUploadFile = new();
+    private readonly Button btnRefreshFiles = new();
     private readonly Label lblStatus = new();
     private readonly ProgressBar progressTransfer = new();  // 进度条
     private readonly TextBox txtLog = new();
+    private readonly DataGridView gridFiles = new();
     private int? currentUserId;
 
     // 初始化窗体并创建客户端界面控件。
@@ -93,6 +95,11 @@ public partial class Form1 : Form
         btnUploadFile.Text = "上传文件";
         btnUploadFile.Click += BtnUploadFile_Click;
 
+        btnRefreshFiles.Location = new Point(560, 146);
+        btnRefreshFiles.Size = new Size(90, 30);
+        btnRefreshFiles.Text = "刷新列表";
+        btnRefreshFiles.Click += BtnRefreshFiles_Click;
+
         lblStatus.AutoSize = true;
         lblStatus.Location = new Point(24, 120);
         lblStatus.Text = "状态：未连接";
@@ -103,10 +110,20 @@ public partial class Form1 : Form
         progressTransfer.Maximum = 100;
 
         txtLog.Location = new Point(24, 188);
-        txtLog.Size = new Size(550, 172);
+        txtLog.Size = new Size(700, 120);
         txtLog.Multiline = true;
         txtLog.ReadOnly = true;
         txtLog.ScrollBars = ScrollBars.Vertical;
+
+        gridFiles.Location = new Point(24, 320);
+        gridFiles.Size = new Size(700, 240);
+        gridFiles.AllowUserToAddRows = false;
+        gridFiles.AllowUserToDeleteRows = false;
+        gridFiles.ReadOnly = true;
+        gridFiles.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        gridFiles.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        gridFiles.RowHeadersVisible = false;
+        BuildFileGridColumns();
 
         Controls.AddRange(new Control[]  // 将上面的全部控件添加到窗体中
         {
@@ -122,10 +139,23 @@ public partial class Form1 : Form
             btnLogin,
             btnRegister,
             btnUploadFile,
+            btnRefreshFiles,
             lblStatus,
             progressTransfer,
-            txtLog
+            txtLog,
+            gridFiles
         });
+    }
+
+    // 初始化文件列表表格字段。
+    private void BuildFileGridColumns()
+    {
+        gridFiles.Columns.Add("FileId", "文件 ID");
+        gridFiles.Columns.Add("OriginalFileName", "文件名");
+        gridFiles.Columns.Add("FileSize", "大小");
+        gridFiles.Columns.Add("ResourceType", "类型");
+        gridFiles.Columns.Add("UploaderName", "上传者");
+        gridFiles.Columns.Add("UploadedAt", "上传时间");
     }
 
     // 处理连接测试按钮点击，发送测试消息检查服务端是否可用。
@@ -209,6 +239,28 @@ public partial class Form1 : Form
         });
     }
 
+    // 处理刷新列表按钮点击，从服务端查询已上传文件。
+    private async void BtnRefreshFiles_Click(object? sender, EventArgs e)
+    {
+        await RunWithButtonsDisabledAsync(async () =>
+        {
+            if (currentUserId == null)
+            {
+                AppendLog("请先登录后再刷新文件列表。");
+                return;
+            }
+
+            if (!TryGetServer(out string serverIp, out int port))
+            {
+                return;
+            }
+
+            FileListRequestDto request = new(currentUserId.Value);
+            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.FileListRequest, request);
+            ShowFileListResponse(response);
+        });
+    }
+
     // 发送连接测试消息并显示服务端响应。
     private async Task SendTestMessageAsync(string serverIp, int port)
     {
@@ -252,12 +304,29 @@ public partial class Form1 : Form
                 progressTransfer.Value = progress;
             });
             ShowUploadResponse(response);
+
+            if (response.ReadBody<UploadResponseDto>()?.Success == true)
+            {
+                await RefreshFileListAfterUploadAsync(serverIp, port);
+            }
         }
         catch (Exception ex)
         {
             lblStatus.Text = "状态：上传失败";
             AppendLog($"上传失败：{ex.Message}");
         }
+    }
+
+    private async Task RefreshFileListAfterUploadAsync(string serverIp, int port)
+    {
+        if (currentUserId == null)
+        {
+            return;
+        }
+
+        FileListRequestDto request = new(currentUserId.Value);
+        ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.FileListRequest, request);
+        ShowFileListResponse(response);
     }
 
 
@@ -311,6 +380,48 @@ public partial class Form1 : Form
         }
     }
 
+    // 将服务端返回的文件列表填充到表格。
+    private void ShowFileListResponse(ReceivedMessage response)
+    {
+        FileListResponseDto? body = response.ReadBody<FileListResponseDto>();
+        if (body?.Success != true)
+        {
+            lblStatus.Text = "状态：刷新列表失败";
+            AppendLog($"文件列表：{body?.Message}");
+            return;
+        }
+
+        gridFiles.Rows.Clear();
+        foreach (FileListItemDto file in body.Files)
+        {
+            gridFiles.Rows.Add(
+                file.FileId,
+                file.OriginalFileName,
+                FormatFileSize(file.FileSize),
+                file.ResourceType,
+                file.UploaderName,
+                file.UploadedAt.ToString("yyyy-MM-dd HH:mm:ss"));
+        }
+
+        lblStatus.Text = "状态：文件列表已刷新";
+        AppendLog($"文件列表：{body.Message}，共 {body.Files.Count} 个文件");
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024)
+        {
+            return $"{bytes} B";
+        }
+
+        if (bytes < 1024 * 1024)
+        {
+            return $"{bytes / 1024.0:F1} KB";
+        }
+
+        return $"{bytes / 1024.0 / 1024.0:F1} MB";
+    }
+
     // 参数是：返回值同时声明
     // 获得服务端ip和端口号
     private bool TryGetServer(out string serverIp, out int port)
@@ -355,6 +466,7 @@ public partial class Form1 : Form
         btnLogin.Enabled = false;
         btnRegister.Enabled = false;
         btnUploadFile.Enabled = false;
+        btnRefreshFiles.Enabled = false;
 
         try
         {
@@ -366,6 +478,7 @@ public partial class Form1 : Form
             btnLogin.Enabled = true;
             btnRegister.Enabled = true;
             btnUploadFile.Enabled = true;
+            btnRefreshFiles.Enabled = true;
         }
     }
 
