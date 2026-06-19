@@ -10,3 +10,4 @@ obj/
 *.db
 *.db-shm
 *.db-wal
+*.baiduyun.uploading.cfg

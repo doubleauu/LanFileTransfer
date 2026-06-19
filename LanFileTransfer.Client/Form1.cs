@@ -1,11 +1,11 @@
 // 客户端主窗体，提供服务器连接测试和操作日志显示。
-using System.Net.Sockets;
 using LanFileTransfer.Common;
 
 namespace LanFileTransfer.Client;
 
 public partial class Form1 : Form
 {
+    private readonly ClientConnection clientConnection = new();
     private readonly TextBox txtServerIp = new();
     private readonly TextBox txtPort = new();
     private readonly TextBox txtUsername = new();
@@ -13,15 +13,20 @@ public partial class Form1 : Form
     private readonly Button btnConnect = new();
     private readonly Button btnLogin = new();
     private readonly Button btnRegister = new();
+    private readonly Button btnUploadFile = new();
     private readonly Label lblStatus = new();
+    private readonly ProgressBar progressTransfer = new();  // 进度条
     private readonly TextBox txtLog = new();
+    private int? currentUserId;
 
+    // 初始化窗体并创建客户端界面控件。
     public Form1()
     {
         InitializeComponent();
         BuildConnectionUi();
     }
 
+    // 构建连接、登录、上传和日志显示相关控件。
     private void BuildConnectionUi()
     {
         // 上方是服务器连接配置，后续所有请求都会使用这组 IP 和端口。
@@ -83,12 +88,22 @@ public partial class Form1 : Form
         btnRegister.Text = "注册";
         btnRegister.Click += BtnRegister_Click;
 
+        btnUploadFile.Location = new Point(465, 146);
+        btnUploadFile.Size = new Size(80, 30);
+        btnUploadFile.Text = "上传文件";
+        btnUploadFile.Click += BtnUploadFile_Click;
+
         lblStatus.AutoSize = true;
         lblStatus.Location = new Point(24, 120);
         lblStatus.Text = "状态：未连接";
 
-        txtLog.Location = new Point(24, 155);
-        txtLog.Size = new Size(550, 205);
+        progressTransfer.Location = new Point(24, 148);
+        progressTransfer.Size = new Size(420, 24);
+        progressTransfer.Minimum = 0;
+        progressTransfer.Maximum = 100;
+
+        txtLog.Location = new Point(24, 188);
+        txtLog.Size = new Size(550, 172);
         txtLog.Multiline = true;
         txtLog.ReadOnly = true;
         txtLog.ScrollBars = ScrollBars.Vertical;
@@ -106,11 +121,14 @@ public partial class Form1 : Form
             txtPassword,
             btnLogin,
             btnRegister,
+            btnUploadFile,
             lblStatus,
+            progressTransfer,
             txtLog
         });
     }
 
+    // 处理连接测试按钮点击，发送测试消息检查服务端是否可用。
     private async void BtnConnect_Click(object? sender, EventArgs e)
     {
         await RunWithButtonsDisabledAsync(async () =>
@@ -125,6 +143,7 @@ public partial class Form1 : Form
         });
     }
 
+    // 处理登录按钮点击，将用户名和密码发送给服务端验证。
     private async void BtnLogin_Click(object? sender, EventArgs e)
     {
         await RunWithButtonsDisabledAsync(async () =>
@@ -135,11 +154,14 @@ public partial class Form1 : Form
             }
 
             LoginRequestDto request = new(username, password);
-            ReceivedMessage response = await SendRequestAsync(serverIp, port, MessageType.LoginRequest, request);
+            AppendLog($"正在连接 {serverIp}:{port} ...");
+            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.LoginRequest, request);
+            AppendLog($"已发送：{MessageType.LoginRequest}");
             ShowLoginResponse(response);
         });
     }
 
+    // 处理注册按钮点击，将新用户信息发送给服务端保存。
     private async void BtnRegister_Click(object? sender, EventArgs e)
     {
         await RunWithButtonsDisabledAsync(async () =>
@@ -150,19 +172,54 @@ public partial class Form1 : Form
             }
 
             RegisterRequestDto request = new(username, password);
-            ReceivedMessage response = await SendRequestAsync(serverIp, port, MessageType.RegisterRequest, request);
+            AppendLog($"正在连接 {serverIp}:{port} ...");
+            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.RegisterRequest, request);
+            AppendLog($"已发送：{MessageType.RegisterRequest}");
             ShowRegisterResponse(response);
         });
     }
 
+    // 处理上传文件按钮点击，弹出文件目录窗口，选择本地文件后开始上传。
+    private async void BtnUploadFile_Click(object? sender, EventArgs e)
+    {
+        await RunWithButtonsDisabledAsync(async () =>
+        {
+            if (currentUserId == null)
+            {
+                AppendLog("请先登录后再上传文件。");
+                return;
+            }
+
+            if (!TryGetServer(out string serverIp, out int port))
+            {
+                return;
+            }
+
+            using OpenFileDialog dialog = new()
+            {
+                Title = "选择要上传的文件"
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            await UploadFileAsync(serverIp, port, dialog.FileName);
+        });
+    }
+
+    // 发送连接测试消息并显示服务端响应。
     private async Task SendTestMessageAsync(string serverIp, int port)
     {
         try
         {
-            // 阶段四改为结构化消息，后续登录、上传、下载都会复用这套协议。
+            // 结构化消息，登录、上传、下载都会复用这套协议。
             string testMessage = $"客户端连接测试 {DateTime.Now:HH:mm:ss}";
-            ReceivedMessage response = await SendRequestAsync(serverIp, port, MessageType.TestRequest, new TestMessageDto(testMessage));
-            ShowServerResponse(response);
+            AppendLog($"正在连接 {serverIp}:{port} ...");
+            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.TestRequest, new TestMessageDto(testMessage));
+            AppendLog($"已发送：{MessageType.TestRequest}");
+            ShowServerResponse(response);  // 服务端返回接受状态并输出
         }
         catch (Exception ex)
         {
@@ -171,23 +228,40 @@ public partial class Form1 : Form
         }
     }
 
-    private async Task<ReceivedMessage> SendRequestAsync<T>(string serverIp, int port, MessageType messageType, T request)
+    // 上传指定文件，先发送元数据，再分块发送文件内容。
+    private async Task UploadFileAsync(string serverIp, int port, string filePath)
     {
-        AppendLog($"正在连接 {serverIp}:{port} ...");
+        FileInfo fileInfo = new(filePath);
+        UploadRequestDto request = new(
+            currentUserId!.Value,  // 感叹号表示忽略之前的的可空约束，保证非空
+            fileInfo.Name,
+            ResourceType.File,
+            fileInfo.Length,
+            fileInfo.Name,
+            fileInfo.Extension,
+            null);
 
-        // 每次请求建立一个短连接，当前阶段逻辑最简单，后续需要持续连接时再调整。
-        using TcpClient client = new();
-        await client.ConnectAsync(serverIp, port);
+        try
+        {
+            AppendLog($"开始上传：{fileInfo.Name}");
+            progressTransfer.Value = 0;
 
-        await using NetworkStream stream = client.GetStream();
-        await TcpMessageProtocol.SendAsync(stream, messageType, request);
-        AppendLog($"已发送：{messageType}");
-
-        return await TcpMessageProtocol.ReceiveAsync(stream);
+            // 文件内容不放进 JSON，而是在上传请求后由通信类直接按块写入网络流。
+            ReceivedMessage response = await clientConnection.UploadFileAsync(serverIp, port, request, filePath, progress =>
+            {
+                progressTransfer.Value = progress;
+            });
+            ShowUploadResponse(response);
+        }
+        catch (Exception ex)
+        {
+            lblStatus.Text = "状态：上传失败";
+            AppendLog($"上传失败：{ex.Message}");
+        }
     }
 
 
-    // 输出服务端返回状态
+    // 输出 服务端返回状态
     private void ShowServerResponse(ReceivedMessage response)
     {
         if (response.Type == MessageType.TestResponse)
@@ -209,6 +283,11 @@ public partial class Form1 : Form
         LoginResponseDto? body = response.ReadBody<LoginResponseDto>();
         lblStatus.Text = body?.Success == true ? $"状态：已登录 {body.Username}" : "状态：登录失败";
         AppendLog($"登录结果：{body?.Message}");
+
+        if (body?.Success == true)
+        {
+            currentUserId = body.UserId;
+        }
     }
 
     // 输出注册状态到日志区
@@ -217,6 +296,19 @@ public partial class Form1 : Form
         RegisterResponseDto? body = response.ReadBody<RegisterResponseDto>();
         lblStatus.Text = body?.Success == true ? "状态：注册成功" : "状态：注册失败";
         AppendLog($"注册结果：{body?.Message}");
+    }
+
+    // 输出上传结果到状态栏和日志区。
+    private void ShowUploadResponse(ReceivedMessage response)
+    {
+        UploadResponseDto? body = response.ReadBody<UploadResponseDto>();
+        lblStatus.Text = body?.Success == true ? "状态：上传成功" : "状态：上传失败";
+        AppendLog($"上传结果：{body?.Message}，已传输 {body?.BytesTransferred ?? 0} 字节");
+
+        if (body?.Success == true)
+        {
+            progressTransfer.Value = 100;
+        }
     }
 
     // 参数是：返回值同时声明
@@ -256,12 +348,13 @@ public partial class Form1 : Form
         return true;
     }
 
-    // 异步执行，期间禁用按钮
+    // 定义异步执行任务，期间禁用按钮
     private async Task RunWithButtonsDisabledAsync(Func<Task> action)
     {
         btnConnect.Enabled = false;
         btnLogin.Enabled = false;
         btnRegister.Enabled = false;
+        btnUploadFile.Enabled = false;
 
         try
         {
@@ -272,9 +365,11 @@ public partial class Form1 : Form
             btnConnect.Enabled = true;
             btnLogin.Enabled = true;
             btnRegister.Enabled = true;
+            btnUploadFile.Enabled = true;
         }
     }
 
+    // 向日志文本框追加一条带时间的消息。
     private void AppendLog(string message)
     {
         txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");

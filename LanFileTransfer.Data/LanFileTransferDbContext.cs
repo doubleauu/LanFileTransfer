@@ -18,6 +18,7 @@ public class LanFileTransferDbContext : DbContext
 
     public DbSet<TransferRecord> TransferRecords => Set<TransferRecord>();
 
+    // 配置表字段、索引、枚举保存方式和表之间的关系。
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // 用户名必须唯一，避免注册重复账号。

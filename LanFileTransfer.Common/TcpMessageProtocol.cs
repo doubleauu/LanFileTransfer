@@ -10,6 +10,7 @@ public static class TcpMessageProtocol
     private const int HeaderLengthBytes = 4;  // 消息头长度
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);  // 创建一个固定的json序列化规则
 
+    // 发送结构化消息，按消息头长度、消息头、消息体的顺序写入网络流。
     public static async Task SendAsync<T>(NetworkStream stream, MessageType type, T body, CancellationToken cancellationToken = default)
     {
         byte[] bodyBytes = JsonSerializer.SerializeToUtf8Bytes(body, JsonOptions);  // 序列化
@@ -26,6 +27,7 @@ public static class TcpMessageProtocol
         await stream.FlushAsync(cancellationToken);
     }
 
+    // 接收结构化消息，先读消息头再根据消息体长度读取完整内容。
     public static async Task<ReceivedMessage> ReceiveAsync(NetworkStream stream, CancellationToken cancellationToken = default)
     {
         byte[] headerLengthBytes = await ReadExactAsync(stream, HeaderLengthBytes, cancellationToken);
@@ -48,6 +50,7 @@ public static class TcpMessageProtocol
         return new ReceivedMessage(header.Type, bodyBytes);
     }
 
+    // 从网络流中循环读取指定长度的数据，解决 TCP 拆包导致的一次读不完整问题。
     private static async Task<byte[]> ReadExactAsync(NetworkStream stream, int length, CancellationToken cancellationToken)
     {
         byte[] buffer = new byte[length];
@@ -73,6 +76,7 @@ public static class TcpMessageProtocol
 
 public sealed record ReceivedMessage(MessageType Type, byte[] BodyBytes)
 {
+    // 将消息体 JSON 反序列化成指定 DTO 类型。
     public T? ReadBody<T>()
     {
         // 业务处理时按消息类型反序列化为对应 DTO。
