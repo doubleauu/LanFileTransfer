@@ -16,7 +16,7 @@ public static class TcpMessageProtocol
         ProtocolHeader header = new(type, bodyBytes.Length);
         byte[] headerBytes = JsonSerializer.SerializeToUtf8Bytes(header, JsonOptions);
 
-        byte[] headerLengthBytes = new byte[HeaderLengthBytes];
+        byte[] headerLengthBytes = new byte[HeaderLengthBytes];  // 用四字节写入消息头长度
         BinaryPrimitives.WriteInt32BigEndian(headerLengthBytes, headerBytes.Length);
 
         // 写入顺序：消息头长度、消息头内容、消息体内容。
