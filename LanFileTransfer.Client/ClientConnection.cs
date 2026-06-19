@@ -33,6 +33,26 @@ internal class ClientConnection
         return await TcpMessageProtocol.ReceiveAsync(stream);
     }
 
+    // 下载指定文件，先接收下载响应，再按服务端返回的文件大小读取内容。
+    public async Task<DownloadResponseDto?> DownloadFileAsync(string serverIp, int port, DownloadRequestDto request, string savePath, Action<int>? reportProgress)
+    {
+        using TcpClient client = new();
+        await client.ConnectAsync(serverIp, port);
+
+        await using NetworkStream stream = client.GetStream();
+        await TcpMessageProtocol.SendAsync(stream, MessageType.DownloadRequest, request);
+
+        ReceivedMessage responseMessage = await TcpMessageProtocol.ReceiveAsync(stream);
+        DownloadResponseDto? response = responseMessage.ReadBody<DownloadResponseDto>();
+        if (response?.Success != true)
+        {
+            return response;
+        }
+
+        await ReceiveFileContentAsync(stream, savePath, response.FileSize, reportProgress);
+        return response;
+    }
+
     // 从本地文件读取字节并写入网络流，同时回调上传进度。
     private static async Task SendFileContentAsync(NetworkStream stream, string filePath, long fileSize, Action<int>? reportProgress)
     {
@@ -59,5 +79,32 @@ internal class ClientConnection
         }
 
         await stream.FlushAsync();
+    }
+
+    // 从网络流读取指定大小的文件内容并保存到本地。
+    private static async Task ReceiveFileContentAsync(NetworkStream stream, string savePath, long fileSize, Action<int>? reportProgress)
+    {
+        byte[] buffer = new byte[FileBufferSize];
+        long totalRead = 0;
+
+        await using FileStream fileStream = new(savePath, FileMode.Create, FileAccess.Write, FileShare.None);
+        while (totalRead < fileSize)
+        {
+            int needRead = (int)Math.Min(buffer.Length, fileSize - totalRead);
+            int readCount = await stream.ReadAsync(buffer.AsMemory(0, needRead));
+            if (readCount == 0)
+            {
+                throw new EndOfStreamException("下载连接提前断开。");
+            }
+
+            await fileStream.WriteAsync(buffer.AsMemory(0, readCount));
+            totalRead += readCount;
+
+            if (fileSize > 0)
+            {
+                int progress = Math.Min(100, (int)(totalRead * 100 / fileSize));
+                reportProgress?.Invoke(progress);
+            }
+        }
     }
 }

@@ -52,6 +52,10 @@ internal static class ClientHandler
                 FileListResponseDto response = await HandleFileListAsync(message);
                 await TcpMessageProtocol.SendAsync(stream, MessageType.FileListResponse, response);
             }
+            else if (message.Type == MessageType.DownloadRequest)
+            {
+                await HandleDownloadAsync(message, stream, clientAddress);
+            }
             else
             {
                 Console.WriteLine($"收到暂不支持的消息类型：{message.Type}");
@@ -99,6 +103,75 @@ internal static class ClientHandler
             .ToListAsync();
 
         return new FileListResponseDto(true, "文件列表刷新成功。", files);
+    }
+
+    // 处理单文件下载，先发送文件信息，再分块发送文件内容。
+    private static async Task HandleDownloadAsync(ReceivedMessage message, NetworkStream stream, string clientAddress)
+    {
+        DownloadRequestDto? request = message.ReadBody<DownloadRequestDto>();
+        if (request == null || request.UserId <= 0 || request.FileId <= 0)
+        {
+            DownloadResponseDto response = new(false, "下载请求参数不正确。", 0, string.Empty, ResourceType.File, 0);
+            await TcpMessageProtocol.SendAsync(stream, MessageType.DownloadResponse, response);
+            return;
+        }
+
+        await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
+        FileRecord? fileRecord = await dbContext.FileRecords.FirstOrDefaultAsync(file => file.Id == request.FileId);
+        if (fileRecord == null || !File.Exists(fileRecord.FilePath))
+        {
+            DownloadResponseDto response = new(false, "文件不存在或已被删除。", request.FileId, string.Empty, ResourceType.File, 0);
+            await TcpMessageProtocol.SendAsync(stream, MessageType.DownloadResponse, response);
+            return;
+        }
+
+        DownloadResponseDto successResponse = new(
+            true,
+            "开始下载。",
+            fileRecord.Id,
+            fileRecord.OriginalFileName,
+            fileRecord.ResourceType,
+            fileRecord.FileSize);
+        await TcpMessageProtocol.SendAsync(stream, MessageType.DownloadResponse, successResponse);
+
+        long bytesSent = await SendFileContentAsync(stream, fileRecord.FilePath);
+        dbContext.TransferRecords.Add(new TransferRecord
+        {
+            UserId = request.UserId,
+            FileId = fileRecord.Id,
+            TransferType = TransferType.Download,
+            Status = TransferStatus.Success,
+            BytesTransferred = bytesSent,
+            ClientIp = clientAddress,
+            StartedAt = DateTime.Now,
+            FinishedAt = DateTime.Now
+        });
+        await dbContext.SaveChangesAsync();
+
+        Console.WriteLine($"文件下载完成：{fileRecord.OriginalFileName}，发送 {bytesSent} 字节");
+    }
+
+    // 从服务端本地文件读取字节并写入网络流。
+    private static async Task<long> SendFileContentAsync(NetworkStream stream, string filePath)
+    {
+        byte[] buffer = new byte[FileBufferSize];
+        long totalSent = 0;
+
+        await using FileStream fileStream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        while (true)
+        {
+            int readCount = await fileStream.ReadAsync(buffer);
+            if (readCount == 0)
+            {
+                break;
+            }
+
+            await stream.WriteAsync(buffer.AsMemory(0, readCount));
+            totalSent += readCount;
+        }
+
+        await stream.FlushAsync();
+        return totalSent;
     }
 
     // 处理用户注册请求，检查重名后保存新用户。

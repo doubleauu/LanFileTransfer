@@ -15,6 +15,7 @@ public partial class Form1 : Form
     private readonly Button btnRegister = new();
     private readonly Button btnUploadFile = new();
     private readonly Button btnRefreshFiles = new();
+    private readonly Button btnDownloadFile = new();
     private readonly Label lblStatus = new();
     private readonly ProgressBar progressTransfer = new();  // 进度条
     private readonly TextBox txtLog = new();
@@ -100,6 +101,11 @@ public partial class Form1 : Form
         btnRefreshFiles.Text = "刷新列表";
         btnRefreshFiles.Click += BtnRefreshFiles_Click;
 
+        btnDownloadFile.Location = new Point(660, 146);
+        btnDownloadFile.Size = new Size(80, 30);
+        btnDownloadFile.Text = "下载文件";
+        btnDownloadFile.Click += BtnDownloadFile_Click;
+
         lblStatus.AutoSize = true;
         lblStatus.Location = new Point(24, 120);
         lblStatus.Text = "状态：未连接";
@@ -140,6 +146,7 @@ public partial class Form1 : Form
             btnRegister,
             btnUploadFile,
             btnRefreshFiles,
+            btnDownloadFile,
             lblStatus,
             progressTransfer,
             txtLog,
@@ -258,6 +265,37 @@ public partial class Form1 : Form
             FileListRequestDto request = new(currentUserId.Value);
             ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.FileListRequest, request);
             ShowFileListResponse(response);
+        });
+    }
+
+    // 处理下载文件按钮点击，下载表格中当前选中的文件。
+    private async void BtnDownloadFile_Click(object? sender, EventArgs e)
+    {
+        await RunWithButtonsDisabledAsync(async () =>
+        {
+            if (currentUserId == null)
+            {
+                AppendLog("请先登录后再下载文件。");
+                return;
+            }
+
+            if (!TryGetServer(out string serverIp, out int port) || !TryGetSelectedFile(out int fileId, out string fileName))
+            {
+                return;
+            }
+
+            using SaveFileDialog dialog = new()
+            {
+                Title = "保存下载文件",
+                FileName = fileName
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            await DownloadFileAsync(serverIp, port, fileId, dialog.FileName);
         });
     }
 
@@ -380,6 +418,36 @@ public partial class Form1 : Form
         }
     }
 
+    private async Task DownloadFileAsync(string serverIp, int port, int fileId, string savePath)
+    {
+        try
+        {
+            progressTransfer.Value = 0;
+            DownloadRequestDto request = new(currentUserId!.Value, fileId);
+            DownloadResponseDto? response = await clientConnection.DownloadFileAsync(serverIp, port, request, savePath, progress =>
+            {
+                progressTransfer.Value = progress;
+            });
+
+            if (response?.Success == true)
+            {
+                progressTransfer.Value = 100;
+                lblStatus.Text = "状态：下载成功";
+                AppendLog($"下载成功：{savePath}");
+            }
+            else
+            {
+                lblStatus.Text = "状态：下载失败";
+                AppendLog($"下载失败：{response?.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            lblStatus.Text = "状态：下载失败";
+            AppendLog($"下载失败：{ex.Message}");
+        }
+    }
+
     // 将服务端返回的文件列表填充到表格。
     private void ShowFileListResponse(ReceivedMessage response)
     {
@@ -420,6 +488,30 @@ public partial class Form1 : Form
         }
 
         return $"{bytes / 1024.0 / 1024.0:F1} MB";
+    }
+
+    private bool TryGetSelectedFile(out int fileId, out string fileName)
+    {
+        fileId = 0;
+        fileName = string.Empty;
+
+        if (gridFiles.CurrentRow == null)
+        {
+            AppendLog("请先在文件列表中选择一个文件。");
+            return false;
+        }
+
+        object? fileIdValue = gridFiles.CurrentRow.Cells["FileId"].Value;
+        object? fileNameValue = gridFiles.CurrentRow.Cells["OriginalFileName"].Value;
+
+        if (fileIdValue == null || !int.TryParse(fileIdValue.ToString(), out fileId) || fileNameValue == null)
+        {
+            AppendLog("选中文件信息不完整。");
+            return false;
+        }
+
+        fileName = fileNameValue.ToString() ?? "download.dat";
+        return true;
     }
 
     // 参数是：返回值同时声明
@@ -467,6 +559,7 @@ public partial class Form1 : Form
         btnRegister.Enabled = false;
         btnUploadFile.Enabled = false;
         btnRefreshFiles.Enabled = false;
+        btnDownloadFile.Enabled = false;
 
         try
         {
@@ -479,6 +572,7 @@ public partial class Form1 : Form
             btnRegister.Enabled = true;
             btnUploadFile.Enabled = true;
             btnRefreshFiles.Enabled = true;
+            btnDownloadFile.Enabled = true;
         }
     }
 
