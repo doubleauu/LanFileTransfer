@@ -96,8 +96,6 @@ public class FileRecord
 
     public long FileSize { get; set; }
 
-    public string? FileHash { get; set; }
-
     public ResourceType ResourceType { get; set; } = ResourceType.File;
 
     public int UploaderId { get; set; }

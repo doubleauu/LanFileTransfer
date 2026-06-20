@@ -33,23 +33,19 @@ internal static class ClientHandler
                 }
                 else if (message.Type == MessageType.RegisterRequest)
                 {
-                    RegisterResponseDto response = await HandleRegisterAsync(message);
-                    await SendRegisterResponseAsync(stream, response);
+                    await HandleRegisterAsync(message, stream);
                 }
                 else if (message.Type == MessageType.LoginRequest)
                 {
-                    LoginResponseDto response = await HandleLoginAsync(message);
-                    await SendLoginResponseAsync(stream, response);
+                    await HandleLoginAsync(message, stream);
                 }
                 else if (message.Type == MessageType.UploadRequest)
                 {
-                    UploadResponseDto response = await HandleUploadAsync(message, stream, clientAddress);
-                    await SendUploadResponseAsync(stream, response);
+                    await HandleUploadAsync(message, stream, clientAddress);
                 }
                 else if (message.Type == MessageType.FileListRequest)
                 {
-                    FileListResponseDto response = await HandleFileListAsync(message);
-                    await SendFileListResponseAsync(stream, response);
+                    await HandleFileListAsync(message, stream);
                 }
                 else if (message.Type == MessageType.DownloadRequest)
                 {
@@ -57,8 +53,7 @@ internal static class ClientHandler
                 }
                 else if (message.Type == MessageType.TransferRecordRequest)
                 {
-                    TransferRecordResponseDto response = await HandleTransferRecordsAsync(message);
-                    await SendTransferRecordResponseAsync(stream, response);
+                    await HandleTransferRecordsAsync(message, stream);
                 }
                 else
                 {
@@ -79,56 +74,74 @@ internal static class ClientHandler
     }
 
     // 查询服务端已保存的文件列表，返回给客户端表格展示。
-    private static async Task<FileListResponseDto> HandleFileListAsync(CommandMessage message)
+    private static async Task HandleFileListAsync(CommandMessage message, NetworkStream stream)
     {
         int.TryParse(message.GetField(0), out int userId);
         if (userId <= 0)
         {
-            return new FileListResponseDto(false, "请先登录后再刷新文件列表。", new List<FileListItemDto>());
+            await TcpMessageProtocol.SendCommandAsync(stream, MessageType.FileListResponse, "false", "请先登录后再刷新文件列表。", "0");
+            return;
         }
 
         await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
         bool userExists = await dbContext.Users.AnyAsync(user => user.Id == userId);
         if (!userExists)
         {
-            return new FileListResponseDto(false, "当前用户不存在，请重新登录。", new List<FileListItemDto>());
+            await TcpMessageProtocol.SendCommandAsync(stream, MessageType.FileListResponse, "false", "当前用户不存在，请重新登录。", "0");
+            return;
         }
 
-        List<FileListItemDto> files = await dbContext.FileRecords
+        var files = await dbContext.FileRecords
             .Include(file => file.Uploader)
             .OrderByDescending(file => file.UploadedAt)
-            .Select(file => new FileListItemDto(
+            .Select(file => new
+            {
                 file.Id,
                 file.OriginalFileName,
                 file.FileSize,
                 file.ResourceType,
-                file.Uploader == null ? "未知用户" : file.Uploader.Username,
-                file.UploadedAt))
+                UploaderName = file.Uploader == null ? "未知用户" : file.Uploader.Username,
+                file.UploadedAt
+            })
             .ToListAsync();
 
-        return new FileListResponseDto(true, "文件列表刷新成功。", files);
+        List<string> fields = new List<string> { "true", "文件列表刷新成功。", files.Count.ToString() };
+        foreach (var file in files)
+        {
+            fields.Add(file.Id.ToString());
+            fields.Add(file.OriginalFileName);
+            fields.Add(file.FileSize.ToString());
+            fields.Add(file.ResourceType.ToString());
+            fields.Add(file.UploaderName);
+            fields.Add(file.UploadedAt.ToString("O"));
+        }
+
+        await TcpMessageProtocol.SendCommandAsync(stream, MessageType.FileListResponse, fields.ToArray());
     }
 
     // 查询当前用户的上传和下载记录，返回给客户端表格展示。
-    private static async Task<TransferRecordResponseDto> HandleTransferRecordsAsync(CommandMessage message)
+    private static async Task HandleTransferRecordsAsync(CommandMessage message, NetworkStream stream)
     {
         int.TryParse(message.GetField(0), out int userId);
         if (userId <= 0)
         {
-            return new TransferRecordResponseDto(false, "请先登录后再查看传输记录。", new List<TransferRecordItemDto>());
+            await TcpMessageProtocol.SendCommandAsync(stream, MessageType.TransferRecordResponse, "false", "请先登录后再查看传输记录。", "0");
+            return;
         }
 
         await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
         bool userExists = await dbContext.Users.AnyAsync(user => user.Id == userId);
         if (!userExists)
         {
-            return new TransferRecordResponseDto(false, "当前用户不存在，请重新登录。", new List<TransferRecordItemDto>());
+            await TcpMessageProtocol.SendCommandAsync(stream, MessageType.TransferRecordResponse, "false", "当前用户不存在，请重新登录。", "0");
+            return;
         }
 
-        List<TransferRecordItemDto> records = await dbContext.TransferRecords
+        var records = await dbContext.TransferRecords
             .Where(record => record.UserId == userId)
             .OrderByDescending(record => record.StartedAt)
-            .Select(record => new TransferRecordItemDto(
+            .Select(record => new
+            {
                 record.Id,
                 record.UserId,
                 record.FileId,
@@ -137,43 +150,50 @@ internal static class ClientHandler
                 record.BytesTransferred,
                 record.ClientIp,
                 record.StartedAt,
-                record.FinishedAt))
+                record.FinishedAt
+            })
             .ToListAsync();
 
-        return new TransferRecordResponseDto(true, "传输记录刷新成功。", records);
+        List<string> fields = new List<string> { "true", "传输记录刷新成功。", records.Count.ToString() };
+        foreach (var record in records)
+        {
+            fields.Add(record.Id.ToString());
+            fields.Add(record.UserId.ToString());
+            fields.Add(record.FileId.ToString());
+            fields.Add(record.TransferType.ToString());
+            fields.Add(record.Status.ToString());
+            fields.Add(record.BytesTransferred.ToString());
+            fields.Add(record.ClientIp);
+            fields.Add(record.StartedAt.ToString("O"));
+            fields.Add(record.FinishedAt.ToString("O"));
+        }
+
+        await TcpMessageProtocol.SendCommandAsync(stream, MessageType.TransferRecordResponse, fields.ToArray());
     }
 
     // 处理单文件下载，先发送文件信息，再分块发送文件内容。
     private static async Task HandleDownloadAsync(CommandMessage message, NetworkStream stream, string clientAddress)
     {
-        DownloadRequestDto? request = ParseDownloadRequest(message);
-        if (request == null)
+        if (!int.TryParse(message.GetField(0), out int userId) || !int.TryParse(message.GetField(1), out int fileId))
         {
-            await SendDownloadResponseAsync(stream, new DownloadResponseDto(false, "下载请求参数不正确。", 0, string.Empty, ResourceType.File, 0));
+            await SendDownloadResponseAsync(stream, false, "下载请求参数不正确。", 0, string.Empty, ResourceType.File, 0);
             return;
         }
 
         await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
-        FileRecord? fileRecord = await dbContext.FileRecords.FirstOrDefaultAsync(file => file.Id == request.FileId);
+        FileRecord? fileRecord = await dbContext.FileRecords.FirstOrDefaultAsync(file => file.Id == fileId);
         if (fileRecord == null || !File.Exists(fileRecord.FilePath))
         {
-            await SendDownloadResponseAsync(stream, new DownloadResponseDto(false, "文件不存在或已被删除。", request.FileId, string.Empty, ResourceType.File, 0));
+            await SendDownloadResponseAsync(stream, false, "文件不存在或已被删除。", fileId, string.Empty, ResourceType.File, 0);
             return;
         }
 
-        DownloadResponseDto successResponse = new DownloadResponseDto(
-            true,
-            "开始下载。",
-            fileRecord.Id,
-            fileRecord.OriginalFileName,
-            fileRecord.ResourceType,
-            fileRecord.FileSize);
-        await SendDownloadResponseAsync(stream, successResponse);
+        await SendDownloadResponseAsync(stream, true, "开始下载。", fileRecord.Id, fileRecord.OriginalFileName, fileRecord.ResourceType, fileRecord.FileSize);
 
         long bytesSent = await SendFileContentAsync(stream, fileRecord.FilePath);
         dbContext.TransferRecords.Add(new TransferRecord
         {
-            UserId = request.UserId,
+            UserId = userId,
             FileId = fileRecord.Id,
             TransferType = TransferType.Download,
             Status = TransferStatus.Success,
@@ -213,73 +233,88 @@ internal static class ClientHandler
     }
 
     // 处理用户注册请求，检查重名后保存新用户。
-    private static async Task<RegisterResponseDto> HandleRegisterAsync(CommandMessage message)
+    private static async Task HandleRegisterAsync(CommandMessage message, NetworkStream stream)
     {
-        RegisterRequestDto? request = ParseRegisterRequest(message);
-        if (request == null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        string username = message.GetField(0).Trim();
+        string password = message.GetField(1);
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
-            return new RegisterResponseDto(false, "用户名和密码不能为空。", null);
+            await SendRegisterResponseAsync(stream, false, "用户名和密码不能为空。", null);
+            return;
         }
 
-        string username = request.Username.Trim();
         await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
 
         if (await dbContext.Users.AnyAsync(user => user.Username == username))
         {
-            return new RegisterResponseDto(false, "用户名已存在。", null);
+            await SendRegisterResponseAsync(stream, false, "用户名已存在。", null);
+            return;
         }
 
         User user = new User
         {
             Username = username,
-            PasswordHash = HashPassword(request.Password)
+            PasswordHash = HashPassword(password)
         };
 
         dbContext.Users.Add(user);
         await dbContext.SaveChangesAsync();
         Console.WriteLine($"用户注册成功：{username}");
 
-        return new RegisterResponseDto(true, "注册成功。", user.Id);
+        await SendRegisterResponseAsync(stream, true, "注册成功。", user.Id);
     }
 
     // 处理用户登录请求，查询用户并验证密码哈希。
-    private static async Task<LoginResponseDto> HandleLoginAsync(CommandMessage message)
+    private static async Task HandleLoginAsync(CommandMessage message, NetworkStream stream)
     {
-        LoginRequestDto? request = ParseLoginRequest(message);
-        if (request == null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        string username = message.GetField(0).Trim();
+        string password = message.GetField(1);
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
-            return new LoginResponseDto(false, "用户名和密码不能为空。", null, null);
+            await SendLoginResponseAsync(stream, false, "用户名和密码不能为空。", null, null);
+            return;
         }
 
-        string username = request.Username.Trim();
-        string passwordHash = HashPassword(request.Password);
+        string passwordHash = HashPassword(password);
 
         await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
         User? user = await dbContext.Users.FirstOrDefaultAsync(item => item.Username == username);
 
         if (user == null || user.PasswordHash != passwordHash)
         {
-            return new LoginResponseDto(false, "用户名或密码错误。", null, null);
+            await SendLoginResponseAsync(stream, false, "用户名或密码错误。", null, null);
+            return;
         }
 
         Console.WriteLine($"用户登录成功：{username}");
-        return new LoginResponseDto(true, "登录成功。", user.Id, user.Username);
+        await SendLoginResponseAsync(stream, true, "登录成功。", user.Id, user.Username);
     }
 
     // 处理单文件上传，保存文件并写入文件记录和传输记录。
-    private static async Task<UploadResponseDto> HandleUploadAsync(CommandMessage message, NetworkStream stream, string clientAddress)
+    private static async Task HandleUploadAsync(CommandMessage message, NetworkStream stream, string clientAddress)
     {
-        UploadRequestDto? request = ParseUploadRequest(message);
-        if (request == null || request.UserId <= 0 || request.FileSize < 0 || string.IsNullOrWhiteSpace(request.OriginalFileName))
+        if (!int.TryParse(message.GetField(0), out int userId) ||
+            !Enum.TryParse(message.GetField(1), out ResourceType resourceType) ||
+            !long.TryParse(message.GetField(2), out long fileSize))
         {
-            return new UploadResponseDto(false, "上传请求参数不正确。", null, 0);
+            await SendUploadResponseAsync(stream, false, "上传请求参数不正确。", null, 0);
+            return;
+        }
+
+        string originalFileName = message.GetField(3);
+        string extension = message.GetField(4);
+        if (userId <= 0 || fileSize < 0 || string.IsNullOrWhiteSpace(originalFileName))
+        {
+            await SendUploadResponseAsync(stream, false, "上传请求参数不正确。", null, 0);
+            return;
         }
 
         await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
-        User? uploader = await dbContext.Users.FindAsync(request.UserId);
+        User? uploader = await dbContext.Users.FindAsync(userId);
         if (uploader == null)
         {
-            return new UploadResponseDto(false, "上传用户不存在，请先登录。", null, 0);
+            await SendUploadResponseAsync(stream, false, "上传用户不存在，请先登录。", null, 0);
+            return;
         }
 
         Directory.CreateDirectory(Path.Combine(StorageRoot, "temp"));
@@ -287,7 +322,7 @@ internal static class ClientHandler
         string fileDirectory = Path.Combine(StorageRoot, "files", saveDate);
         Directory.CreateDirectory(fileDirectory);
 
-        string extension = string.IsNullOrWhiteSpace(request.Extension) ? Path.GetExtension(request.OriginalFileName) : request.Extension;
+        extension = string.IsNullOrWhiteSpace(extension) ? Path.GetExtension(originalFileName) : extension;
         string storedFileName = $"{Guid.NewGuid():N}{extension}";
         string tempFilePath = Path.Combine(StorageRoot, "temp", storedFileName);
         string finalFilePath = Path.Combine(fileDirectory, storedFileName);
@@ -295,24 +330,24 @@ internal static class ClientHandler
         long bytesReceived = 0;
         try
         {
-            bytesReceived = await SaveUploadFileAsync(stream, tempFilePath, request.FileSize);
-            if (bytesReceived != request.FileSize)
+            bytesReceived = await SaveUploadFileAsync(stream, tempFilePath, fileSize);
+            if (bytesReceived != fileSize)
             {
                 DeleteFileIfExists(tempFilePath);
-                return new UploadResponseDto(false, "文件大小校验失败。", null, bytesReceived);
+                await SendUploadResponseAsync(stream, false, "文件大小校验失败。", null, bytesReceived);
+                return;
             }
 
             File.Move(tempFilePath, finalFilePath, overwrite: false);
 
             FileRecord fileRecord = new FileRecord
             {
-                OriginalFileName = request.OriginalFileName,
+                OriginalFileName = originalFileName,
                 StoredFileName = storedFileName,
                 FilePath = finalFilePath,
-                FileSize = request.FileSize,
-                FileHash = request.FileHash,
-                ResourceType = request.ResourceType,
-                UploaderId = request.UserId
+                FileSize = fileSize,
+                ResourceType = resourceType,
+                UploaderId = userId
             };
 
             dbContext.FileRecords.Add(fileRecord);
@@ -320,7 +355,7 @@ internal static class ClientHandler
 
             TransferRecord transferRecord = new TransferRecord
             {
-                UserId = request.UserId,
+                UserId = userId,
                 FileId = fileRecord.Id,
                 TransferType = TransferType.Upload,
                 Status = TransferStatus.Success,
@@ -333,14 +368,14 @@ internal static class ClientHandler
             dbContext.TransferRecords.Add(transferRecord);
             await dbContext.SaveChangesAsync();
 
-            Console.WriteLine($"文件上传成功：{request.OriginalFileName} -> {finalFilePath}");
-            return new UploadResponseDto(true, "上传成功。", fileRecord.Id, bytesReceived);
+            Console.WriteLine($"文件上传成功：{originalFileName} -> {finalFilePath}");
+            await SendUploadResponseAsync(stream, true, "上传成功。", fileRecord.Id, bytesReceived);
         }
         catch (Exception ex)
         {
             DeleteFileIfExists(tempFilePath);
             Console.WriteLine($"文件上传失败：{ex.Message}");
-            return new UploadResponseDto(false, $"上传失败：{ex.Message}", null, bytesReceived);
+            await SendUploadResponseAsync(stream, false, $"上传失败：{ex.Message}", null, bytesReceived);
         }
     }
 
@@ -369,162 +404,53 @@ internal static class ClientHandler
         return totalRead;
     }
 
-    // 解析登录命令字段。
-    private static LoginRequestDto? ParseLoginRequest(CommandMessage message)
-    {
-        if (message.Fields.Count < 2)
-        {
-            return null;
-        }
-
-        return new LoginRequestDto(message.GetField(0), message.GetField(1));
-    }
-
-    // 解析注册命令字段。
-    private static RegisterRequestDto? ParseRegisterRequest(CommandMessage message)
-    {
-        if (message.Fields.Count < 2)
-        {
-            return null;
-        }
-
-        return new RegisterRequestDto(message.GetField(0), message.GetField(1));
-    }
-
-    // 解析上传命令字段。
-    private static UploadRequestDto? ParseUploadRequest(CommandMessage message)
-    {
-        if (message.Fields.Count < 6)
-        {
-            return null;
-        }
-
-        if (!int.TryParse(message.GetField(0), out int userId) ||
-            !Enum.TryParse(message.GetField(2), out ResourceType resourceType) ||
-            !long.TryParse(message.GetField(3), out long fileSize))
-        {
-            return null;
-        }
-
-        string fileHash = message.GetField(6);
-        return new UploadRequestDto(
-            userId,
-            message.GetField(1),
-            resourceType,
-            fileSize,
-            message.GetField(4),
-            message.GetField(5),
-            string.IsNullOrWhiteSpace(fileHash) ? null : fileHash);
-    }
-
-    // 解析下载命令字段。
-    private static DownloadRequestDto? ParseDownloadRequest(CommandMessage message)
-    {
-        if (message.Fields.Count < 2)
-        {
-            return null;
-        }
-
-        if (!int.TryParse(message.GetField(0), out int userId) || !int.TryParse(message.GetField(1), out int fileId))
-        {
-            return null;
-        }
-
-        return new DownloadRequestDto(userId, fileId);
-    }
-
     // 发送登录响应命令。
-    private static async Task SendLoginResponseAsync(NetworkStream stream, LoginResponseDto response)
+    private static async Task SendLoginResponseAsync(NetworkStream stream, bool success, string message, int? userId, string? username)
     {
         await TcpMessageProtocol.SendCommandAsync(
             stream,
             MessageType.LoginResponse,
-            ToProtocolBool(response.Success),
-            response.Message,
-            response.UserId?.ToString() ?? string.Empty,
-            response.Username ?? string.Empty);
+            ToProtocolBool(success),
+            message,
+            userId?.ToString() ?? string.Empty,
+            username ?? string.Empty);
     }
 
     // 发送注册响应命令。
-    private static async Task SendRegisterResponseAsync(NetworkStream stream, RegisterResponseDto response)
+    private static async Task SendRegisterResponseAsync(NetworkStream stream, bool success, string message, int? userId)
     {
         await TcpMessageProtocol.SendCommandAsync(
             stream,
             MessageType.RegisterResponse,
-            ToProtocolBool(response.Success),
-            response.Message,
-            response.UserId?.ToString() ?? string.Empty);
+            ToProtocolBool(success),
+            message,
+            userId?.ToString() ?? string.Empty);
     }
 
     // 发送上传响应命令。
-    private static async Task SendUploadResponseAsync(NetworkStream stream, UploadResponseDto response)
+    private static async Task SendUploadResponseAsync(NetworkStream stream, bool success, string message, int? fileId, long bytesTransferred)
     {
         await TcpMessageProtocol.SendCommandAsync(
             stream,
             MessageType.UploadResponse,
-            ToProtocolBool(response.Success),
-            response.Message,
-            response.FileId?.ToString() ?? string.Empty,
-            response.BytesTransferred.ToString());
+            ToProtocolBool(success),
+            message,
+            fileId?.ToString() ?? string.Empty,
+            bytesTransferred.ToString());
     }
 
     // 发送下载响应命令。
-    private static async Task SendDownloadResponseAsync(NetworkStream stream, DownloadResponseDto response)
+    private static async Task SendDownloadResponseAsync(NetworkStream stream, bool success, string message, int fileId, string originalFileName, ResourceType resourceType, long fileSize)
     {
         await TcpMessageProtocol.SendCommandAsync(
             stream,
             MessageType.DownloadResponse,
-            ToProtocolBool(response.Success),
-            response.Message,
-            response.FileId.ToString(),
-            response.OriginalFileName,
-            response.ResourceType.ToString(),
-            response.FileSize.ToString());
-    }
-
-    // 发送文件列表响应命令。
-    private static async Task SendFileListResponseAsync(NetworkStream stream, FileListResponseDto response)
-    {
-        List<string> fields = new List<string>();
-        fields.Add(ToProtocolBool(response.Success));
-        fields.Add(response.Message);
-        fields.Add(response.Files.Count.ToString());
-
-        foreach (FileListItemDto file in response.Files)
-        {
-            fields.Add(file.FileId.ToString());
-            fields.Add(file.OriginalFileName);
-            fields.Add(file.FileSize.ToString());
-            fields.Add(file.ResourceType.ToString());
-            fields.Add(file.UploaderName);
-            fields.Add(file.UploadedAt.ToString("O"));
-        }
-
-        await TcpMessageProtocol.SendCommandAsync(stream, MessageType.FileListResponse, fields.ToArray());
-    }
-
-    // 发送传输记录响应命令。
-    private static async Task SendTransferRecordResponseAsync(NetworkStream stream, TransferRecordResponseDto response)
-    {
-        List<string> fields = new List<string>();
-        fields.Add(ToProtocolBool(response.Success));
-        fields.Add(response.Message);
-        fields.Add(response.Records.Count.ToString());
-
-        foreach (TransferRecordItemDto record in response.Records)
-        {
-            fields.Add(record.Id.ToString());
-            fields.Add(record.UserId.ToString());
-            fields.Add(record.FileId.ToString());
-            fields.Add(record.TransferType.ToString());
-            fields.Add(record.Status.ToString());
-            fields.Add(record.BytesTransferred.ToString());
-            fields.Add(record.ClientIp);
-            fields.Add(record.StartedAt.ToString("O"));
-            fields.Add(record.FinishedAt.ToString("O"));
-        }
-
-        await TcpMessageProtocol.SendCommandAsync(stream, MessageType.TransferRecordResponse, fields.ToArray());
+            ToProtocolBool(success),
+            message,
+            fileId.ToString(),
+            originalFileName,
+            resourceType.ToString(),
+            fileSize.ToString());
     }
 
     // 把布尔值转成协议中的小写文本。

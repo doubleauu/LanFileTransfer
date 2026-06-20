@@ -12,7 +12,7 @@
 - 文件列表查询
 - 上传和下载进度显示
 - 上传、下载传输记录查询
-- 服务端保存文件元数据和传输记录
+- **服务端**保存文件元数据和传输记录
 
 ## 二、项目结构
 
@@ -20,7 +20,7 @@
 LanFileTransfer
 ├── LanFileTransfer.Client      WinForms 客户端
 ├── LanFileTransfer.Server      Console 服务端
-├── LanFileTransfer.Common      客户端和服务端共用类型与 TCP 命令协议
+├── LanFileTransfer.Common      客户端和服务端共用枚举与 TCP 命令协议
 ├── LanFileTransfer.Data        EF Core 数据库上下文和实体类
 └── LanFileTransfer.sln         Visual Studio 解决方案文件
 ```
@@ -51,17 +51,18 @@ LanFileTransfer
 
 主要文件：
 
-- `CommonModels.cs`：保存消息类型、资源类型、传输状态和简单数据对象。
+- `CommonModels.cs`：保存消息类型、资源类型和传输记录相关枚举。
 - `TcpMessageProtocol.cs`：封装 TCP 命令字符串协议。
 
 通信格式采用教材风格的普通命令字符串，例如：
 
 ```text
-Login|用户名|密码
-Register|用户名|密码
-FileList|用户Id
-Upload|用户Id|资源名|资源类型|文件大小|原文件名|扩展名
-Download|用户Id|文件Id
+LoginRequest|用户名|密码
+RegisterRequest|用户名|密码
+FileListRequest|用户Id
+UploadRequest|用户Id|资源类型|文件大小|原文件名|扩展名
+DownloadRequest|用户Id|文件Id
+TransferRecordRequest|用户Id
 ```
 
 为了避免 TCP 粘包和拆包问题，命令发送时使用：
@@ -70,7 +71,7 @@ Download|用户Id|文件Id
 4 字节命令长度 + UTF-8 命令字符串
 ```
 
-文件内容不放在命令字符串中，而是在上传或下载命令后通过 `NetworkStream` 分块传输。
+字段之间使用 `|` 分隔，协议类会对字段中的 `|`、`\` 和换行做简单转义。文件内容不放在命令字符串中，而是在上传或下载命令后通过 `NetworkStream` 分块传输。
 
 ### 4. LanFileTransfer.Data
 
@@ -85,6 +86,8 @@ Download|用户Id|文件Id
 - `User`：保存用户账号和密码哈希。
 - `FileRecord`：保存文件名、大小、保存路径、资源类型等文件元数据。
 - `TransferRecord`：保存上传和下载记录。
+
+当前项目为了贴近课程作业规模，没有再单独保留一套 DTO 对象。客户端和服务端直接根据命令字段读写业务数据，代码更直观，也方便课堂展示。
 
 ## 三、运行环境
 
@@ -129,7 +132,7 @@ Download|用户Id|文件Id
 
 - 数据库保存用户、文件信息和传输记录。
 - 实际文件保存在服务端本地磁盘中。
-- 上传文件先写入临时目录，校验大小后再移动到正式保存目录。
+- 上传文件先写入临时目录，校验大小后再移动到正式保存目录。（避免留下不完整文件）
 
 ## 七、课程知识点对应
 
@@ -138,6 +141,7 @@ Download|用户Id|文件Id
 - WinForms：窗体、按钮、文本框、表格、文件选择对话框。
 - TCP 编程：`TcpClient`、`TcpListener`、`NetworkStream`。
 - TCP 字节流处理：使用长度前缀解决粘包和拆包问题。
+- 简单文本协议：使用 `命令类型|字段1|字段2` 的方式表达业务请求。
 - 文件流：使用 `FileStream` 分块读写文件。
 - 文件夹处理：使用 ZIP 压缩和解压文件夹。
 - EF Core：使用 DbContext、实体类和 LINQ 查询 SQLite 数据库。

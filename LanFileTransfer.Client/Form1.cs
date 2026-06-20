@@ -444,14 +444,13 @@ public partial class Form1 : Form
     private async Task UploadFileAsync(string serverIp, int port, string filePath)
     {
         FileInfo fileInfo = new(filePath);
-        await UploadResourceAsync(
-            serverIp,
-            port,
-            filePath,
-            fileInfo.Name,
-            fileInfo.Name,
-            fileInfo.Extension,
-            ResourceType.File,
+            await UploadResourceAsync(
+                serverIp,
+                port,
+                filePath,
+                fileInfo.Name,
+                fileInfo.Extension,
+                ResourceType.File,
             deleteAfterUpload: false);
     }
 
@@ -472,7 +471,6 @@ public partial class Form1 : Form
                 serverIp,
                 port,
                 zipPath,
-                folderName,
                 $"{folderName}.zip",
                 ".zip",
                 ResourceType.FolderZip,
@@ -490,21 +488,12 @@ public partial class Form1 : Form
         string serverIp,
         int port,
         string filePath,
-        string resourceName,
         string originalFileName,
         string extension,
         ResourceType resourceType,
         bool deleteAfterUpload)
     {
         FileInfo fileInfo = new(filePath);
-        UploadRequestDto request = new(
-            currentUserId!.Value,  // 感叹号表示忽略之前的的可空约束，保证非空
-            resourceName,
-            resourceType,
-            fileInfo.Length,
-            originalFileName,
-            extension,
-            null);
 
         try
         {
@@ -512,13 +501,19 @@ public partial class Form1 : Form
             progressTransfer.Value = 0;
 
             // 文件内容不放进命令字符串，而是在上传命令后由通信类直接按块写入网络流。
-            CommandMessage response = await clientConnection.UploadFileAsync(serverIp, port, request, filePath, progress =>
-            {
-                progressTransfer.Value = progress;
-            });
+            CommandMessage response = await clientConnection.UploadFileAsync(
+                serverIp,
+                port,
+                currentUserId!.Value,
+                resourceType,
+                fileInfo.Length,
+                originalFileName,
+                extension,
+                filePath,
+                progress => progressTransfer.Value = progress);
             ShowUploadResponse(response);
 
-            if (ParseUploadResponse(response)?.Success == true)
+            if (response.Type == MessageType.UploadResponse && IsProtocolTrue(response.GetField(0)))
             {
                 await RefreshFileListAfterUploadAsync(serverIp, port);
             }
@@ -554,42 +549,42 @@ public partial class Form1 : Form
     {
         if (response.Type == MessageType.TestResponse)
         {
-            TestMessageDto body = new TestMessageDto(response.GetField(0));
-            AppendLog($"服务端响应：{body.Content}");
+            AppendLog($"服务端响应：{response.GetField(0)}");
             return;
         }
 
-        ErrorResponseDto error = ParseErrorResponse(response);
-        AppendLog($"服务端错误：{error.Message}");
+        AppendLog($"服务端错误：{GetResponseMessage(response)}");
     }
 
     // 输出登录状态到日志区
     private void ShowLoginResponse(CommandMessage response)
     {
-        LoginResponseDto? body = ParseLoginResponse(response);
-        AppendLog($"登录结果：{body?.Message}");
+        AppendLog($"登录结果：{GetResponseMessage(response)}");
 
-        if (body?.Success == true)
+        if (response.Type == MessageType.LoginResponse && IsProtocolTrue(response.GetField(0)))
         {
-            currentUserId = body.UserId;
-            lblCurrentUser.Text = $"当前用户：{body.Username}";
+            if (int.TryParse(response.GetField(2), out int userId))
+            {
+                currentUserId = userId;
+            }
+
+            lblCurrentUser.Text = $"当前用户：{response.GetField(3)}";
         }
     }
 
     // 输出注册状态到日志区
     private void ShowRegisterResponse(CommandMessage response)
     {
-        RegisterResponseDto? body = ParseRegisterResponse(response);
-        AppendLog($"注册结果：{body?.Message}");
+        AppendLog($"注册结果：{GetResponseMessage(response)}");
     }
 
     // 输出上传结果到状态栏和日志区。
     private void ShowUploadResponse(CommandMessage response)
     {
-        UploadResponseDto? body = ParseUploadResponse(response);
-        AppendLog($"上传结果：{body?.Message}，已传输 {body?.BytesTransferred ?? 0} 字节");
+        long.TryParse(response.GetField(3), out long bytesTransferred);
+        AppendLog($"上传结果：{GetResponseMessage(response)}，已传输 {bytesTransferred} 字节");
 
-        if (body?.Success == true)
+        if (response.Type == MessageType.UploadResponse && IsProtocolTrue(response.GetField(0)))
         {
             progressTransfer.Value = 100;
         }
@@ -601,25 +596,25 @@ public partial class Form1 : Form
         try
         {
             progressTransfer.Value = 0;
-            DownloadRequestDto request = new(currentUserId!.Value, fileId);
-            DownloadResponseDto? response = await clientConnection.DownloadFileAsync(serverIp, port, request, savePath, progress =>
+            CommandMessage response = await clientConnection.DownloadFileAsync(serverIp, port, currentUserId!.Value, fileId, savePath, progress =>
             {
                 progressTransfer.Value = progress;
             });
 
-            if (response?.Success == true)
+            if (response.Type == MessageType.DownloadResponse && IsProtocolTrue(response.GetField(0)))
             {
                 progressTransfer.Value = 100;
                 AppendLog($"下载成功：{savePath}");
 
-                if (response.ResourceType == ResourceType.FolderZip)
+                Enum.TryParse(response.GetField(4), out ResourceType resourceType);
+                if (resourceType == ResourceType.FolderZip)
                 {
                     ExtractFolderZipIfNeeded(savePath);
                 }
             }
             else
             {
-                AppendLog($"下载失败：{response?.Message}");
+                AppendLog($"下载失败：{GetResponseMessage(response)}");
             }
         }
         catch (Exception ex)
@@ -664,10 +659,9 @@ public partial class Form1 : Form
     // 将服务端返回的文件列表填充到表格。
     private void ShowFileListResponse(CommandMessage response)
     {
-        FileListResponseDto? body = ParseFileListResponse(response);
-        if (body?.Success != true)
+        if (response.Type != MessageType.FileListResponse || !IsProtocolTrue(response.GetField(0)))
         {
-            AppendLog($"文件列表：{body?.Message}");
+            AppendLog($"文件列表：{GetResponseMessage(response)}");
             return;
         }
 
@@ -678,119 +672,7 @@ public partial class Form1 : Form
             showingTransferRecords = false;
         }
 
-        foreach (FileListItemDto file in body.Files)
-        {
-            gridFiles.Rows.Add(
-                file.FileId,
-                file.OriginalFileName,
-                FormatFileSize(file.FileSize),
-                file.ResourceType,
-                file.UploaderName,
-                file.UploadedAt.ToString("yyyy-MM-dd HH:mm:ss"));
-        }
-
-        AppendLog($"文件列表：{body.Message}，共 {body.Files.Count} 个文件");
-    }
-
-    // 将服务端返回的传输记录填充到表格。
-    private void ShowTransferRecordResponse(CommandMessage response)
-    {
-        TransferRecordResponseDto? body = ParseTransferRecordResponse(response);
-        if (body?.Success != true)
-        {
-            AppendLog($"传输记录：{body?.Message}");
-            return;
-        }
-
-        if (!showingTransferRecords)
-        {
-            BuildTransferRecordGridColumns();
-            showingTransferRecords = true;
-        }
-
-        gridFiles.Rows.Clear();
-        foreach (TransferRecordItemDto record in body.Records)
-        {
-            gridFiles.Rows.Add(
-                record.Id,
-                record.FileId,
-                record.TransferType,
-                record.Status,
-                record.BytesTransferred,
-                record.ClientIp,
-                record.StartedAt.ToString("yyyy-MM-dd HH:mm:ss"),
-                record.FinishedAt.ToString("yyyy-MM-dd HH:mm:ss"));
-        }
-
-        AppendLog($"传输记录：{body.Message}，共 {body.Records.Count} 条记录");
-    }
-
-    // 解析登录响应命令。
-    private static LoginResponseDto? ParseLoginResponse(CommandMessage response)
-    {
-        if (response.Type != MessageType.LoginResponse)
-        {
-            return new LoginResponseDto(false, "服务端返回的不是登录响应。", null, null);
-        }
-
-        bool success = IsProtocolTrue(response.GetField(0));
-        int? userId = null;
-        if (int.TryParse(response.GetField(2), out int parsedUserId))
-        {
-            userId = parsedUserId;
-        }
-
-        return new LoginResponseDto(success, response.GetField(1), userId, response.GetField(3));
-    }
-
-    // 解析注册响应命令。
-    private static RegisterResponseDto? ParseRegisterResponse(CommandMessage response)
-    {
-        if (response.Type != MessageType.RegisterResponse)
-        {
-            return new RegisterResponseDto(false, "服务端返回的不是注册响应。", null);
-        }
-
-        int? userId = null;
-        if (int.TryParse(response.GetField(2), out int parsedUserId))
-        {
-            userId = parsedUserId;
-        }
-
-        return new RegisterResponseDto(IsProtocolTrue(response.GetField(0)), response.GetField(1), userId);
-    }
-
-    // 解析上传响应命令。
-    private static UploadResponseDto? ParseUploadResponse(CommandMessage response)
-    {
-        if (response.Type != MessageType.UploadResponse)
-        {
-            return new UploadResponseDto(false, "服务端返回的不是上传响应。", null, 0);
-        }
-
-        int? fileId = null;
-        if (int.TryParse(response.GetField(2), out int parsedFileId))
-        {
-            fileId = parsedFileId;
-        }
-
-        long.TryParse(response.GetField(3), out long bytesTransferred);
-        return new UploadResponseDto(IsProtocolTrue(response.GetField(0)), response.GetField(1), fileId, bytesTransferred);
-    }
-
-    // 解析文件列表响应命令。
-    private static FileListResponseDto? ParseFileListResponse(CommandMessage response)
-    {
-        if (response.Type != MessageType.FileListResponse)
-        {
-            return new FileListResponseDto(false, "服务端返回的不是文件列表响应。", new List<FileListItemDto>());
-        }
-
-        bool success = IsProtocolTrue(response.GetField(0));
-        string message = response.GetField(1);
         int.TryParse(response.GetField(2), out int fileCount);
-        List<FileListItemDto> files = new List<FileListItemDto>();
-
         int index = 3;
         for (int i = 0; i < fileCount && index + 5 < response.Fields.Count; i++)
         {
@@ -801,31 +683,41 @@ public partial class Form1 : Form
             string uploaderName = response.GetField(index + 4);
             DateTime.TryParse(response.GetField(index + 5), out DateTime uploadedAt);
 
-            files.Add(new FileListItemDto(fileId, originalFileName, fileSize, resourceType, uploaderName, uploadedAt));
+            gridFiles.Rows.Add(
+                fileId,
+                originalFileName,
+                FormatFileSize(fileSize),
+                resourceType,
+                uploaderName,
+                uploadedAt.ToString("yyyy-MM-dd HH:mm:ss"));
+
             index += 6;
         }
 
-        return new FileListResponseDto(success, message, files);
+        AppendLog($"文件列表：{response.GetField(1)}，共 {fileCount} 个文件");
     }
 
-    // 解析传输记录响应命令。
-    private static TransferRecordResponseDto? ParseTransferRecordResponse(CommandMessage response)
+    // 将服务端返回的传输记录填充到表格。
+    private void ShowTransferRecordResponse(CommandMessage response)
     {
-        if (response.Type != MessageType.TransferRecordResponse)
+        if (response.Type != MessageType.TransferRecordResponse || !IsProtocolTrue(response.GetField(0)))
         {
-            return new TransferRecordResponseDto(false, "服务端返回的不是传输记录响应。", new List<TransferRecordItemDto>());
+            AppendLog($"传输记录：{GetResponseMessage(response)}");
+            return;
         }
 
-        bool success = IsProtocolTrue(response.GetField(0));
-        string message = response.GetField(1);
-        int.TryParse(response.GetField(2), out int recordCount);
-        List<TransferRecordItemDto> records = new List<TransferRecordItemDto>();
+        if (!showingTransferRecords)
+        {
+            BuildTransferRecordGridColumns();
+            showingTransferRecords = true;
+        }
 
+        gridFiles.Rows.Clear();
+        int.TryParse(response.GetField(2), out int recordCount);
         int index = 3;
         for (int i = 0; i < recordCount && index + 8 < response.Fields.Count; i++)
         {
             int.TryParse(response.GetField(index), out int id);
-            int.TryParse(response.GetField(index + 1), out int userId);
             int.TryParse(response.GetField(index + 2), out int fileId);
             Enum.TryParse(response.GetField(index + 3), out TransferType transferType);
             Enum.TryParse(response.GetField(index + 4), out TransferStatus status);
@@ -834,28 +726,42 @@ public partial class Form1 : Form
             DateTime.TryParse(response.GetField(index + 7), out DateTime startedAt);
             DateTime.TryParse(response.GetField(index + 8), out DateTime finishedAt);
 
-            records.Add(new TransferRecordItemDto(id, userId, fileId, transferType, status, bytesTransferred, clientIp, startedAt, finishedAt));
+            gridFiles.Rows.Add(
+                id,
+                fileId,
+                transferType,
+                status,
+                bytesTransferred,
+                clientIp,
+                startedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+                finishedAt.ToString("yyyy-MM-dd HH:mm:ss"));
+
             index += 9;
         }
 
-        return new TransferRecordResponseDto(success, message, records);
-    }
-
-    // 解析错误响应命令。
-    private static ErrorResponseDto ParseErrorResponse(CommandMessage response)
-    {
-        if (response.Type == MessageType.ErrorResponse)
-        {
-            return new ErrorResponseDto(response.GetField(0), response.GetField(1));
-        }
-
-        return new ErrorResponseDto("未知响应。", response.Type.ToString());
+        AppendLog($"传输记录：{response.GetField(1)}，共 {recordCount} 条记录");
     }
 
     // 判断协议中的布尔文本是否表示 true。
     private static bool IsProtocolTrue(string value)
     {
         return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // 读取服务端响应中的提示信息。
+    private static string GetResponseMessage(CommandMessage response)
+    {
+        if (response.Fields.Count > 1)
+        {
+            return response.GetField(1);
+        }
+
+        if (response.Fields.Count == 1)
+        {
+            return response.GetField(0);
+        }
+
+        return "未知响应。";
     }
 
     // 将字节数格式化为适合界面显示的大小。

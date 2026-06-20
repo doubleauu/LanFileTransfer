@@ -24,7 +24,16 @@ internal class ClientConnection
     }
 
     // 上传指定文件，先发送上传命令，再分块发送文件内容。
-    public async Task<CommandMessage> UploadFileAsync(string serverIp, int port, UploadRequestDto request, string filePath, Action<int>? reportProgress)
+    public async Task<CommandMessage> UploadFileAsync(
+        string serverIp,
+        int port,
+        int userId,
+        ResourceType resourceType,
+        long fileSize,
+        string originalFileName,
+        string extension,
+        string filePath,
+        Action<int>? reportProgress)
     {
         using (TcpClient client = new TcpClient())
         {
@@ -35,22 +44,20 @@ internal class ClientConnection
                 await TcpMessageProtocol.SendCommandAsync(
                     stream,
                     MessageType.UploadRequest,
-                    request.UserId.ToString(),
-                    request.ResourceName,
-                    request.ResourceType.ToString(),
-                    request.FileSize.ToString(),
-                    request.OriginalFileName,
-                    request.Extension,
-                    request.FileHash ?? string.Empty);
+                    userId.ToString(),
+                    resourceType.ToString(),
+                    fileSize.ToString(),
+                    originalFileName,
+                    extension);
 
-                await SendFileContentAsync(stream, filePath, request.FileSize, reportProgress);
+                await SendFileContentAsync(stream, filePath, fileSize, reportProgress);
                 return await TcpMessageProtocol.ReceiveCommandAsync(stream);
             }
         }
     }
 
     // 下载指定文件，先发送下载命令，再根据响应读取文件内容。
-    public async Task<DownloadResponseDto?> DownloadFileAsync(string serverIp, int port, DownloadRequestDto request, string savePath, Action<int>? reportProgress)
+    public async Task<CommandMessage> DownloadFileAsync(string serverIp, int port, int userId, int fileId, string savePath, Action<int>? reportProgress)
     {
         using (TcpClient client = new TcpClient())
         {
@@ -61,43 +68,20 @@ internal class ClientConnection
                 await TcpMessageProtocol.SendCommandAsync(
                     stream,
                     MessageType.DownloadRequest,
-                    request.UserId.ToString(),
-                    request.FileId.ToString());
+                    userId.ToString(),
+                    fileId.ToString());
 
-                CommandMessage responseMessage = await TcpMessageProtocol.ReceiveCommandAsync(stream);
-                DownloadResponseDto? response = ParseDownloadResponse(responseMessage);
-                if (response == null || !response.Success)
+                CommandMessage response = await TcpMessageProtocol.ReceiveCommandAsync(stream);
+                if (response.Type != MessageType.DownloadResponse || !IsProtocolTrue(response.GetField(0)))
                 {
                     return response;
                 }
 
-                await ReceiveFileContentAsync(stream, savePath, response.FileSize, reportProgress);
+                long.TryParse(response.GetField(5), out long fileSize);
+                await ReceiveFileContentAsync(stream, savePath, fileSize, reportProgress);
                 return response;
             }
         }
-    }
-
-    // 将下载响应命令转换为下载响应对象。
-    private static DownloadResponseDto? ParseDownloadResponse(CommandMessage message)
-    {
-        if (message.Type != MessageType.DownloadResponse)
-        {
-            return new DownloadResponseDto(false, "服务端返回的不是下载响应。", 0, string.Empty, ResourceType.File, 0);
-        }
-
-        bool success = string.Equals(message.GetField(0), "true", StringComparison.OrdinalIgnoreCase);
-        string resultMessage = message.GetField(1);
-        int.TryParse(message.GetField(2), out int fileId);
-        Enum.TryParse(message.GetField(4), out ResourceType resourceType);
-        long.TryParse(message.GetField(5), out long fileSize);
-
-        return new DownloadResponseDto(
-            success,
-            resultMessage,
-            fileId,
-            message.GetField(3),
-            resourceType,
-            fileSize);
     }
 
     // 从本地文件读取字节并写入网络流，同时回调上传进度。
@@ -157,5 +141,11 @@ internal class ClientConnection
                 }
             }
         }
+    }
+
+    // 判断协议中的布尔文本是否表示 true。
+    private static bool IsProtocolTrue(string value)
+    {
+        return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
 }
