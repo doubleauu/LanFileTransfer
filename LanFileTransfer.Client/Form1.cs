@@ -1,4 +1,5 @@
 // 客户端主窗体，提供服务器连接测试和操作日志显示。
+using System.IO.Compression;
 using LanFileTransfer.Common;
 
 namespace LanFileTransfer.Client;
@@ -14,6 +15,7 @@ public partial class Form1 : Form
     private readonly Button btnLogin = new();
     private readonly Button btnRegister = new();
     private readonly Button btnUploadFile = new();
+    private readonly Button btnUploadFolder = new();
     private readonly Button btnRefreshFiles = new();
     private readonly Button btnDownloadFile = new();
     private readonly Label lblStatus = new();
@@ -96,6 +98,11 @@ public partial class Form1 : Form
         btnUploadFile.Text = "上传文件";
         btnUploadFile.Click += BtnUploadFile_Click;
 
+        btnUploadFolder.Location = new Point(560, 108);
+        btnUploadFolder.Size = new Size(90, 30);
+        btnUploadFolder.Text = "上传文件夹";
+        btnUploadFolder.Click += BtnUploadFolder_Click;
+
         btnRefreshFiles.Location = new Point(560, 146);
         btnRefreshFiles.Size = new Size(90, 30);
         btnRefreshFiles.Text = "刷新列表";
@@ -145,6 +152,7 @@ public partial class Form1 : Form
             btnLogin,
             btnRegister,
             btnUploadFile,
+            btnUploadFolder,
             btnRefreshFiles,
             btnDownloadFile,
             lblStatus,
@@ -246,6 +254,37 @@ public partial class Form1 : Form
         });
     }
 
+    // 处理上传文件夹按钮点击，先压缩文件夹，再按 ZIP 文件上传。
+    private async void BtnUploadFolder_Click(object? sender, EventArgs e)
+    {
+        await RunWithButtonsDisabledAsync(async () =>
+        {
+            if (currentUserId == null)
+            {
+                AppendLog("请先登录后再上传文件夹。");
+                return;
+            }
+
+            if (!TryGetServer(out string serverIp, out int port))
+            {
+                return;
+            }
+
+            using FolderBrowserDialog dialog = new()
+            {
+                Description = "选择要上传的文件夹",
+                UseDescriptionForTitle = true
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            await UploadFolderAsync(serverIp, port, dialog.SelectedPath);
+        });
+    }
+
     // 处理刷新列表按钮点击，从服务端查询已上传文件。
     private async void BtnRefreshFiles_Click(object? sender, EventArgs e)
     {
@@ -322,18 +361,72 @@ public partial class Form1 : Form
     private async Task UploadFileAsync(string serverIp, int port, string filePath)
     {
         FileInfo fileInfo = new(filePath);
-        UploadRequestDto request = new(
-            currentUserId!.Value,  // 感叹号表示忽略之前的的可空约束，保证非空
+        await UploadResourceAsync(
+            serverIp,
+            port,
+            filePath,
             fileInfo.Name,
-            ResourceType.File,
-            fileInfo.Length,
             fileInfo.Name,
             fileInfo.Extension,
+            ResourceType.File,
+            deleteAfterUpload: false);
+    }
+
+    // 压缩文件夹为临时 ZIP，并复用普通上传流程。
+    private async Task UploadFolderAsync(string serverIp, int port, string folderPath)
+    {
+        string folderName = new DirectoryInfo(folderPath).Name;
+        string tempDirectory = Path.Combine(Path.GetTempPath(), "LanFileTransfer");
+        Directory.CreateDirectory(tempDirectory);
+
+        string zipPath = Path.Combine(tempDirectory, $"{folderName}_{Guid.NewGuid():N}.zip");
+        try
+        {
+            AppendLog($"正在压缩文件夹：{folderName}");
+            ZipFile.CreateFromDirectory(folderPath, zipPath, CompressionLevel.Fastest, includeBaseDirectory: true);
+
+            await UploadResourceAsync(
+                serverIp,
+                port,
+                zipPath,
+                folderName,
+                $"{folderName}.zip",
+                ".zip",
+                ResourceType.FolderZip,
+                deleteAfterUpload: true);
+        }
+        catch (Exception ex)
+        {
+            lblStatus.Text = "状态：文件夹上传失败";
+            AppendLog($"文件夹上传失败：{ex.Message}");
+            DeleteFileIfExists(zipPath);
+        }
+    }
+
+    // 上传文件或文件夹 ZIP，区别由 resourceType 记录到数据库中。
+    private async Task UploadResourceAsync(
+        string serverIp,
+        int port,
+        string filePath,
+        string resourceName,
+        string originalFileName,
+        string extension,
+        ResourceType resourceType,
+        bool deleteAfterUpload)
+    {
+        FileInfo fileInfo = new(filePath);
+        UploadRequestDto request = new(
+            currentUserId!.Value,  // 感叹号表示忽略之前的的可空约束，保证非空
+            resourceName,
+            resourceType,
+            fileInfo.Length,
+            originalFileName,
+            extension,
             null);
 
         try
         {
-            AppendLog($"开始上传：{fileInfo.Name}");
+            AppendLog($"开始上传：{originalFileName}");
             progressTransfer.Value = 0;
 
             // 文件内容不放进 JSON，而是在上传请求后由通信类直接按块写入网络流。
@@ -352,6 +445,13 @@ public partial class Form1 : Form
         {
             lblStatus.Text = "状态：上传失败";
             AppendLog($"上传失败：{ex.Message}");
+        }
+        finally
+        {
+            if (deleteAfterUpload)
+            {
+                DeleteFileIfExists(filePath);
+            }
         }
     }
 
@@ -490,6 +590,15 @@ public partial class Form1 : Form
         return $"{bytes / 1024.0 / 1024.0:F1} MB";
     }
 
+    // 删除临时文件，主要用于上传文件夹后清理临时 ZIP。
+    private static void DeleteFileIfExists(string filePath)
+    {
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+        }
+    }
+
     private bool TryGetSelectedFile(out int fileId, out string fileName)
     {
         fileId = 0;
@@ -558,6 +667,7 @@ public partial class Form1 : Form
         btnLogin.Enabled = false;
         btnRegister.Enabled = false;
         btnUploadFile.Enabled = false;
+        btnUploadFolder.Enabled = false;
         btnRefreshFiles.Enabled = false;
         btnDownloadFile.Enabled = false;
 
@@ -571,6 +681,7 @@ public partial class Form1 : Form
             btnLogin.Enabled = true;
             btnRegister.Enabled = true;
             btnUploadFile.Enabled = true;
+            btnUploadFolder.Enabled = true;
             btnRefreshFiles.Enabled = true;
             btnDownloadFile.Enabled = true;
         }
