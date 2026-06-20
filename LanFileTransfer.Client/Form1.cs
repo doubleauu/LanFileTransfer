@@ -6,6 +6,7 @@ namespace LanFileTransfer.Client;
 
 public partial class Form1 : Form
 {
+    // redonly 表示只读字段
     private readonly ClientConnection clientConnection = new();
     private readonly TextBox txtServerIp = new();
     private readonly TextBox txtPort = new();
@@ -176,7 +177,8 @@ public partial class Form1 : Form
     // 处理连接测试按钮点击，发送测试消息检查服务端是否可用。
     private async void BtnConnect_Click(object? sender, EventArgs e)
     {
-        await RunWithButtonsDisabledAsync(async () =>
+        // 异步lambda表达式，传入一个异步执行任务，async 表示该任务可以使用 await
+        await RunWithButtonsDisabledAsync(async () =>    
         {
             if (!TryGetServer(out string serverIp, out int port))
             {
@@ -198,9 +200,8 @@ public partial class Form1 : Form
                 return;
             }
 
-            LoginRequestDto request = new(username, password);
             AppendLog($"正在连接 {serverIp}:{port} ...");
-            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.LoginRequest, request);
+            CommandMessage response = await clientConnection.SendCommandAsync(serverIp, port, MessageType.LoginRequest, username, password);
             AppendLog($"已发送：{MessageType.LoginRequest}");
             ShowLoginResponse(response);
         });
@@ -216,9 +217,8 @@ public partial class Form1 : Form
                 return;
             }
 
-            RegisterRequestDto request = new(username, password);
             AppendLog($"正在连接 {serverIp}:{port} ...");
-            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.RegisterRequest, request);
+            CommandMessage response = await clientConnection.SendCommandAsync(serverIp, port, MessageType.RegisterRequest, username, password);
             AppendLog($"已发送：{MessageType.RegisterRequest}");
             ShowRegisterResponse(response);
         });
@@ -301,8 +301,7 @@ public partial class Form1 : Form
                 return;
             }
 
-            FileListRequestDto request = new(currentUserId.Value);
-            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.FileListRequest, request);
+            CommandMessage response = await clientConnection.SendCommandAsync(serverIp, port, MessageType.FileListRequest, currentUserId.Value.ToString());
             ShowFileListResponse(response);
         });
     }
@@ -343,10 +342,10 @@ public partial class Form1 : Form
     {
         try
         {
-            // 结构化消息，登录、上传、下载都会复用这套协议。
+            // 命令字符串协议，登录、上传、下载都会复用这套格式。
             string testMessage = $"客户端连接测试 {DateTime.Now:HH:mm:ss}";
             AppendLog($"正在连接 {serverIp}:{port} ...");
-            ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.TestRequest, new TestMessageDto(testMessage));
+            CommandMessage response = await clientConnection.SendCommandAsync(serverIp, port, MessageType.TestRequest, testMessage);
             AppendLog($"已发送：{MessageType.TestRequest}");
             ShowServerResponse(response);  // 服务端返回接受状态并输出
         }
@@ -429,14 +428,14 @@ public partial class Form1 : Form
             AppendLog($"开始上传：{originalFileName}");
             progressTransfer.Value = 0;
 
-            // 文件内容不放进 JSON，而是在上传请求后由通信类直接按块写入网络流。
-            ReceivedMessage response = await clientConnection.UploadFileAsync(serverIp, port, request, filePath, progress =>
+            // 文件内容不放进命令字符串，而是在上传命令后由通信类直接按块写入网络流。
+            CommandMessage response = await clientConnection.UploadFileAsync(serverIp, port, request, filePath, progress =>
             {
                 progressTransfer.Value = progress;
             });
             ShowUploadResponse(response);
 
-            if (response.ReadBody<UploadResponseDto>()?.Success == true)
+            if (ParseUploadResponse(response)?.Success == true)
             {
                 await RefreshFileListAfterUploadAsync(serverIp, port);
             }
@@ -462,32 +461,31 @@ public partial class Form1 : Form
             return;
         }
 
-        FileListRequestDto request = new(currentUserId.Value);
-        ReceivedMessage response = await clientConnection.SendRequestAsync(serverIp, port, MessageType.FileListRequest, request);
+        CommandMessage response = await clientConnection.SendCommandAsync(serverIp, port, MessageType.FileListRequest, currentUserId.Value.ToString());
         ShowFileListResponse(response);
     }
 
 
     // 输出 服务端返回状态
-    private void ShowServerResponse(ReceivedMessage response)
+    private void ShowServerResponse(CommandMessage response)
     {
         if (response.Type == MessageType.TestResponse)
         {
-            TestMessageDto? body = response.ReadBody<TestMessageDto>();
+            TestMessageDto body = new TestMessageDto(response.GetField(0));
             lblStatus.Text = "状态：连接测试成功";
-            AppendLog($"服务端响应：{body?.Content}");
+            AppendLog($"服务端响应：{body.Content}");
             return;
         }
 
-        ErrorResponseDto? error = response.ReadBody<ErrorResponseDto>();
+        ErrorResponseDto error = ParseErrorResponse(response);
         lblStatus.Text = "状态：服务端返回错误";
-        AppendLog($"服务端错误：{error?.Message}");
+        AppendLog($"服务端错误：{error.Message}");
     }
 
     // 输出登录状态到日志区
-    private void ShowLoginResponse(ReceivedMessage response)
+    private void ShowLoginResponse(CommandMessage response)
     {
-        LoginResponseDto? body = response.ReadBody<LoginResponseDto>();
+        LoginResponseDto? body = ParseLoginResponse(response);
         lblStatus.Text = body?.Success == true ? $"状态：已登录 {body.Username}" : "状态：登录失败";
         AppendLog($"登录结果：{body?.Message}");
 
@@ -498,17 +496,17 @@ public partial class Form1 : Form
     }
 
     // 输出注册状态到日志区
-    private void ShowRegisterResponse(ReceivedMessage response)
+    private void ShowRegisterResponse(CommandMessage response)
     {
-        RegisterResponseDto? body = response.ReadBody<RegisterResponseDto>();
+        RegisterResponseDto? body = ParseRegisterResponse(response);
         lblStatus.Text = body?.Success == true ? "状态：注册成功" : "状态：注册失败";
         AppendLog($"注册结果：{body?.Message}");
     }
 
     // 输出上传结果到状态栏和日志区。
-    private void ShowUploadResponse(ReceivedMessage response)
+    private void ShowUploadResponse(CommandMessage response)
     {
-        UploadResponseDto? body = response.ReadBody<UploadResponseDto>();
+        UploadResponseDto? body = ParseUploadResponse(response);
         lblStatus.Text = body?.Success == true ? "状态：上传成功" : "状态：上传失败";
         AppendLog($"上传结果：{body?.Message}，已传输 {body?.BytesTransferred ?? 0} 字节");
 
@@ -549,9 +547,9 @@ public partial class Form1 : Form
     }
 
     // 将服务端返回的文件列表填充到表格。
-    private void ShowFileListResponse(ReceivedMessage response)
+    private void ShowFileListResponse(CommandMessage response)
     {
-        FileListResponseDto? body = response.ReadBody<FileListResponseDto>();
+        FileListResponseDto? body = ParseFileListResponse(response);
         if (body?.Success != true)
         {
             lblStatus.Text = "状态：刷新列表失败";
@@ -575,6 +573,107 @@ public partial class Form1 : Form
         AppendLog($"文件列表：{body.Message}，共 {body.Files.Count} 个文件");
     }
 
+    // 解析登录响应命令。
+    private static LoginResponseDto? ParseLoginResponse(CommandMessage response)
+    {
+        if (response.Type != MessageType.LoginResponse)
+        {
+            return new LoginResponseDto(false, "服务端返回的不是登录响应。", null, null);
+        }
+
+        bool success = IsProtocolTrue(response.GetField(0));
+        int? userId = null;
+        if (int.TryParse(response.GetField(2), out int parsedUserId))
+        {
+            userId = parsedUserId;
+        }
+
+        return new LoginResponseDto(success, response.GetField(1), userId, response.GetField(3));
+    }
+
+    // 解析注册响应命令。
+    private static RegisterResponseDto? ParseRegisterResponse(CommandMessage response)
+    {
+        if (response.Type != MessageType.RegisterResponse)
+        {
+            return new RegisterResponseDto(false, "服务端返回的不是注册响应。", null);
+        }
+
+        int? userId = null;
+        if (int.TryParse(response.GetField(2), out int parsedUserId))
+        {
+            userId = parsedUserId;
+        }
+
+        return new RegisterResponseDto(IsProtocolTrue(response.GetField(0)), response.GetField(1), userId);
+    }
+
+    // 解析上传响应命令。
+    private static UploadResponseDto? ParseUploadResponse(CommandMessage response)
+    {
+        if (response.Type != MessageType.UploadResponse)
+        {
+            return new UploadResponseDto(false, "服务端返回的不是上传响应。", null, 0);
+        }
+
+        int? fileId = null;
+        if (int.TryParse(response.GetField(2), out int parsedFileId))
+        {
+            fileId = parsedFileId;
+        }
+
+        long.TryParse(response.GetField(3), out long bytesTransferred);
+        return new UploadResponseDto(IsProtocolTrue(response.GetField(0)), response.GetField(1), fileId, bytesTransferred);
+    }
+
+    // 解析文件列表响应命令。
+    private static FileListResponseDto? ParseFileListResponse(CommandMessage response)
+    {
+        if (response.Type != MessageType.FileListResponse)
+        {
+            return new FileListResponseDto(false, "服务端返回的不是文件列表响应。", new List<FileListItemDto>());
+        }
+
+        bool success = IsProtocolTrue(response.GetField(0));
+        string message = response.GetField(1);
+        int.TryParse(response.GetField(2), out int fileCount);
+        List<FileListItemDto> files = new List<FileListItemDto>();
+
+        int index = 3;
+        for (int i = 0; i < fileCount && index + 5 < response.Fields.Count; i++)
+        {
+            int.TryParse(response.GetField(index), out int fileId);
+            string originalFileName = response.GetField(index + 1);
+            long.TryParse(response.GetField(index + 2), out long fileSize);
+            Enum.TryParse(response.GetField(index + 3), out ResourceType resourceType);
+            string uploaderName = response.GetField(index + 4);
+            DateTime.TryParse(response.GetField(index + 5), out DateTime uploadedAt);
+
+            files.Add(new FileListItemDto(fileId, originalFileName, fileSize, resourceType, uploaderName, uploadedAt));
+            index += 6;
+        }
+
+        return new FileListResponseDto(success, message, files);
+    }
+
+    // 解析错误响应命令。
+    private static ErrorResponseDto ParseErrorResponse(CommandMessage response)
+    {
+        if (response.Type == MessageType.ErrorResponse)
+        {
+            return new ErrorResponseDto(response.GetField(0), response.GetField(1));
+        }
+
+        return new ErrorResponseDto("未知响应。", response.Type.ToString());
+    }
+
+    // 判断协议中的布尔文本是否表示 true。
+    private static bool IsProtocolTrue(string value)
+    {
+        return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // 将字节数格式化为适合界面显示的大小。
     private static string FormatFileSize(long bytes)
     {
         if (bytes < 1024)
@@ -599,6 +698,7 @@ public partial class Form1 : Form
         }
     }
 
+    // 尝试从表格当前行读取文件 ID 和文件名。
     private bool TryGetSelectedFile(out int fileId, out string fileName)
     {
         fileId = 0;
@@ -660,7 +760,7 @@ public partial class Form1 : Form
         return true;
     }
 
-    // 定义异步执行任务，期间禁用按钮
+    // 定义异步等待执行任务，期间禁用其他按钮
     private async Task RunWithButtonsDisabledAsync(Func<Task> action)
     {
         btnConnect.Enabled = false;

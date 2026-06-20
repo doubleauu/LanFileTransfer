@@ -1,140 +1,301 @@
-// 保存客户端和服务端共用的消息类型、资源类型和数据传输对象。
-namespace LanFileTransfer.Common;
-
-// 消息类型用于区分客户端和服务端之间的业务请求或响应。
-public enum MessageType
+// 保存客户端和服务端共用的命令类型、资源类型和简单数据对象。
+namespace LanFileTransfer.Common
 {
-    TestRequest,
-    TestResponse,
-    LoginRequest,
-    LoginResponse,
-    RegisterRequest,
-    RegisterResponse,
-    UploadRequest,
-    UploadResponse,
-    DownloadRequest,
-    DownloadResponse,
-    FileListRequest,
-    FileListResponse,
-    TransferRecordRequest,
-    TransferRecordResponse,
-    ErrorResponse
+    // 消息类型用于区分客户端和服务端之间的业务命令。
+    public enum MessageType
+    {
+        TestRequest,
+        TestResponse,
+        LoginRequest,
+        LoginResponse,
+        RegisterRequest,
+        RegisterResponse,
+        UploadRequest,
+        UploadResponse,
+        DownloadRequest,
+        DownloadResponse,
+        FileListRequest,
+        FileListResponse,
+        TransferRecordRequest,
+        TransferRecordResponse,
+        ErrorResponse
+    }
+
+    // 资源类型用于区分普通文件、文件夹压缩包和多文件压缩包。
+    public enum ResourceType
+    {
+        File,
+        FolderZip,   // 保留文件夹内部目录
+        MultiFileZip  // 只是多个文件整合一起方便传输，不需要关注内部目录
+    }
+
+    // 传输类型用于保存上传或下载历史。
+    public enum TransferType
+    {
+        Upload,
+        Download
+    }
+
+    // 传输状态用于记录传输是否成功。
+    public enum TransferStatus
+    {
+        Success,
+        Failed
+    }
+
+    // 登录请求对象。
+    public class LoginRequestDto
+    {
+        public string Username { get; set; }
+        public string Password { get; set; }
+
+        public LoginRequestDto(string username, string password)
+        {
+            Username = username;
+            Password = password;
+        }
+    }
+
+    // 登录响应对象。
+    public class LoginResponseDto
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int? UserId { get; set; }
+        public string? Username { get; set; }
+
+        public LoginResponseDto(bool success, string message, int? userId, string? username)
+        {
+            Success = success;
+            Message = message;
+            UserId = userId;
+            Username = username;
+        }
+    }
+
+    // 注册请求对象。
+    public class RegisterRequestDto
+    {
+        public string Username { get; set; }
+        public string Password { get; set; }
+
+        public RegisterRequestDto(string username, string password)
+        {
+            Username = username;
+            Password = password;
+        }
+    }
+
+    // 注册响应对象。
+    public class RegisterResponseDto
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int? UserId { get; set; }
+
+        public RegisterResponseDto(bool success, string message, int? userId)
+        {
+            Success = success;
+            Message = message;
+            UserId = userId;
+        }
+    }
+
+    // 上传请求对象，文件内容会在命令后继续通过 NetworkStream 分块传输。
+    public class UploadRequestDto
+    {
+        public int UserId { get; set; }
+        public string ResourceName { get; set; }
+        public ResourceType ResourceType { get; set; }
+        public long FileSize { get; set; }
+        public string OriginalFileName { get; set; }
+        public string Extension { get; set; }
+        public string? FileHash { get; set; }
+
+        public UploadRequestDto(int userId, string resourceName, ResourceType resourceType, long fileSize, string originalFileName, string extension, string? fileHash)
+        {
+            UserId = userId;
+            ResourceName = resourceName;
+            ResourceType = resourceType;
+            FileSize = fileSize;
+            OriginalFileName = originalFileName;
+            Extension = extension;
+            FileHash = fileHash;
+        }
+    }
+
+    // 上传响应对象。
+    public class UploadResponseDto
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int? FileId { get; set; }
+        public long BytesTransferred { get; set; }
+
+        public UploadResponseDto(bool success, string message, int? fileId, long bytesTransferred)
+        {
+            Success = success;
+            Message = message;
+            FileId = fileId;
+            BytesTransferred = bytesTransferred;
+        }
+    }
+
+    // 下载请求对象。
+    public class DownloadRequestDto
+    {
+        public int UserId { get; set; }
+        public int FileId { get; set; }
+
+        public DownloadRequestDto(int userId, int fileId)
+        {
+            UserId = userId;
+            FileId = fileId;
+        }
+    }
+
+    // 下载响应对象。
+    public class DownloadResponseDto
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public int FileId { get; set; }
+        public string OriginalFileName { get; set; }
+        public ResourceType ResourceType { get; set; }
+        public long FileSize { get; set; }
+
+        public DownloadResponseDto(bool success, string message, int fileId, string originalFileName, ResourceType resourceType, long fileSize)
+        {
+            Success = success;
+            Message = message;
+            FileId = fileId;
+            OriginalFileName = originalFileName;
+            ResourceType = resourceType;
+            FileSize = fileSize;
+        }
+    }
+
+    // 文件列表请求对象。
+    public class FileListRequestDto
+    {
+        public int UserId { get; set; }
+
+        public FileListRequestDto(int userId)
+        {
+            UserId = userId;
+        }
+    }
+
+    // 文件列表中的单行文件信息。
+    public class FileListItemDto
+    {
+        public int FileId { get; set; }
+        public string OriginalFileName { get; set; }
+        public long FileSize { get; set; }
+        public ResourceType ResourceType { get; set; }
+        public string UploaderName { get; set; }
+        public DateTime UploadedAt { get; set; }
+
+        public FileListItemDto(int fileId, string originalFileName, long fileSize, ResourceType resourceType, string uploaderName, DateTime uploadedAt)
+        {
+            FileId = fileId;
+            OriginalFileName = originalFileName;
+            FileSize = fileSize;
+            ResourceType = resourceType;
+            UploaderName = uploaderName;
+            UploadedAt = uploadedAt;
+        }
+    }
+
+    // 文件列表响应对象。
+    public class FileListResponseDto
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public List<FileListItemDto> Files { get; set; }
+
+        public FileListResponseDto(bool success, string message, List<FileListItemDto> files)
+        {
+            Success = success;
+            Message = message;
+            Files = files;
+        }
+    }
+
+    // 传输记录请求对象，后续展示历史记录时使用。
+    public class TransferRecordRequestDto
+    {
+        public int UserId { get; set; }
+
+        public TransferRecordRequestDto(int userId)
+        {
+            UserId = userId;
+        }
+    }
+
+    // 传输记录中的单行信息，后续展示历史记录时使用。
+    public class TransferRecordItemDto
+    {
+        public int Id { get; set; }
+        public int UserId { get; set; }
+        public int FileId { get; set; }
+        public TransferType TransferType { get; set; }
+        public TransferStatus Status { get; set; }
+        public long BytesTransferred { get; set; }
+        public string ClientIp { get; set; }
+        public DateTime StartedAt { get; set; }
+        public DateTime FinishedAt { get; set; }
+
+        public TransferRecordItemDto(int id, int userId, int fileId, TransferType transferType, TransferStatus status, long bytesTransferred, string clientIp, DateTime startedAt, DateTime finishedAt)
+        {
+            Id = id;
+            UserId = userId;
+            FileId = fileId;
+            TransferType = transferType;
+            Status = status;
+            BytesTransferred = bytesTransferred;
+            ClientIp = clientIp;
+            StartedAt = startedAt;
+            FinishedAt = finishedAt;
+        }
+    }
+
+    // 传输记录响应对象，后续展示历史记录时使用。
+    public class TransferRecordResponseDto
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+        public List<TransferRecordItemDto> Records { get; set; }
+
+        public TransferRecordResponseDto(bool success, string message, List<TransferRecordItemDto> records)
+        {
+            Success = success;
+            Message = message;
+            Records = records;
+        }
+    }
+
+    // 连接测试使用的简单消息体。
+    public class TestMessageDto
+    {
+        public string Content { get; set; }
+
+        public TestMessageDto(string content)
+        {
+            Content = content;
+        }
+    }
+
+    // 通用错误响应对象。
+    public class ErrorResponseDto
+    {
+        public string Message { get; set; }
+        public string? Detail { get; set; }
+
+        public ErrorResponseDto(string message, string? detail)
+        {
+            Message = message;
+            Detail = detail;
+        }
+    }
 }
-
-// 资源类型用于区分普通文件、文件夹压缩包和多文件压缩包。
-public enum ResourceType
-{
-    File,
-    FolderZip,   // 保留文件夹内部目录
-    MultiFileZip  // 只是多个文件整合一起方便传输，不需要关注内部目录
-}
-
-// 传输类型和状态用于保存上传、下载历史。
-public enum TransferType
-{
-    Upload,
-    Download
-}
-
-// 传输状态：
-public enum TransferStatus
-{
-    Success,
-    Failed
-}
-
-// 登录和注册相关 DTO。
-public sealed record LoginRequestDto(string Username, string Password);
-
-public sealed record LoginResponseDto(
-    bool Success,
-    string Message,
-    int? UserId,
-    string? Username);
-
-public sealed record RegisterRequestDto(string Username, string Password);
-
-public sealed record RegisterResponseDto(
-    bool Success,
-    string Message,
-    int? UserId);
-
-// 上传和下载相关 DTO；文件内容后续会通过 NetworkStream 分块传输。
-public sealed record UploadRequestDto(
-    int UserId,
-    string ResourceName,
-    ResourceType ResourceType,
-    long FileSize,
-    string OriginalFileName,
-    string Extension,
-    string? FileHash);
-
-public sealed record UploadResponseDto(
-    bool Success,
-    string Message,
-    int? FileId,
-    long BytesTransferred);
-
-public sealed record DownloadRequestDto(
-    int UserId,
-    int FileId);
-
-public sealed record DownloadResponseDto(
-    bool Success,
-    string Message,
-    int FileId,
-    string OriginalFileName,
-    ResourceType ResourceType,
-    long FileSize);
-
-// 文件列表相关 DTO，用于客户端表格展示。
-public sealed record FileListRequestDto(int UserId);
-
-public sealed record FileListItemDto(
-    int FileId,
-    string OriginalFileName,
-    long FileSize,
-    ResourceType ResourceType,
-    string UploaderName,
-    DateTime UploadedAt);
-
-public sealed record FileListResponseDto(
-    bool Success,
-    string Message,
-    IReadOnlyList<FileListItemDto> Files);
-
-// 传输记录相关 DTO，用于展示上传和下载历史。
-public sealed record TransferRecordRequestDto(int UserId);
-
-public sealed record TransferRecordItemDto(
-    int Id,
-    int UserId,
-    int FileId,
-    TransferType TransferType,
-    TransferStatus Status,
-    long BytesTransferred,
-    string ClientIp,
-    DateTime StartedAt,
-    DateTime FinishedAt);
-
-public sealed record TransferRecordResponseDto(
-    bool Success,
-    string Message,
-    IReadOnlyList<TransferRecordItemDto> Records);
-
-// 连接测试使用的简单消息体。
-public sealed record TestMessageDto(string Content);
-
-// 通用响应和错误响应，适合简单结果提示。
-public sealed record ResponseDto(
-    bool Success,
-    string Message);
-
-public sealed record ResponseDto<T>(
-    bool Success,
-    string Message,
-    T? Data);  // 泛型适应不同的返回类型，可能是登录结果，文件传输结果等
-
-public sealed record ErrorResponseDto(
-    string Message,
-    string? Detail);

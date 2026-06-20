@@ -8,49 +8,96 @@ internal class ClientConnection
 {
     private const int FileBufferSize = 64 * 1024;
 
-    // 建立短连接，发送一个结构化请求并接收服务端响应。
-    public async Task<ReceivedMessage> SendRequestAsync<T>(string serverIp, int port, MessageType messageType, T request)
+    // 建立短连接，发送一条命令并接收服务端响应。
+    public async Task<CommandMessage> SendCommandAsync(string serverIp, int port, MessageType messageType, params string[] fields)
     {
-        using TcpClient client = new();
-        await client.ConnectAsync(serverIp, port);
+        using (TcpClient client = new TcpClient())
+        {
+            await client.ConnectAsync(serverIp, port);
 
-        await using NetworkStream stream = client.GetStream();
-        await TcpMessageProtocol.SendAsync(stream, messageType, request);
-
-        return await TcpMessageProtocol.ReceiveAsync(stream);
+            using (NetworkStream stream = client.GetStream())
+            {
+                await TcpMessageProtocol.SendCommandAsync(stream, messageType, fields);
+                return await TcpMessageProtocol.ReceiveCommandAsync(stream);
+            }
+        }
     }
 
-    // 上传指定文件，先发送上传元数据，再分块发送文件内容。
-    public async Task<ReceivedMessage> UploadFileAsync(string serverIp, int port, UploadRequestDto request, string filePath, Action<int>? reportProgress)
+    // 上传指定文件，先发送上传命令，再分块发送文件内容。
+    public async Task<CommandMessage> UploadFileAsync(string serverIp, int port, UploadRequestDto request, string filePath, Action<int>? reportProgress)
     {
-        using TcpClient client = new();
-        await client.ConnectAsync(serverIp, port);
+        using (TcpClient client = new TcpClient())
+        {
+            await client.ConnectAsync(serverIp, port);
 
-        await using NetworkStream stream = client.GetStream();
-        await TcpMessageProtocol.SendAsync(stream, MessageType.UploadRequest, request);
-        await SendFileContentAsync(stream, filePath, request.FileSize, reportProgress);
+            using (NetworkStream stream = client.GetStream())
+            {
+                await TcpMessageProtocol.SendCommandAsync(
+                    stream,
+                    MessageType.UploadRequest,
+                    request.UserId.ToString(),
+                    request.ResourceName,
+                    request.ResourceType.ToString(),
+                    request.FileSize.ToString(),
+                    request.OriginalFileName,
+                    request.Extension,
+                    request.FileHash ?? string.Empty);
 
-        return await TcpMessageProtocol.ReceiveAsync(stream);
+                await SendFileContentAsync(stream, filePath, request.FileSize, reportProgress);
+                return await TcpMessageProtocol.ReceiveCommandAsync(stream);
+            }
+        }
     }
 
-    // 下载指定文件，先接收下载响应，再按服务端返回的文件大小读取内容。
+    // 下载指定文件，先发送下载命令，再根据响应读取文件内容。
     public async Task<DownloadResponseDto?> DownloadFileAsync(string serverIp, int port, DownloadRequestDto request, string savePath, Action<int>? reportProgress)
     {
-        using TcpClient client = new();
-        await client.ConnectAsync(serverIp, port);
-
-        await using NetworkStream stream = client.GetStream();
-        await TcpMessageProtocol.SendAsync(stream, MessageType.DownloadRequest, request);
-
-        ReceivedMessage responseMessage = await TcpMessageProtocol.ReceiveAsync(stream);
-        DownloadResponseDto? response = responseMessage.ReadBody<DownloadResponseDto>();
-        if (response?.Success != true)
+        using (TcpClient client = new TcpClient())
         {
-            return response;
+            await client.ConnectAsync(serverIp, port);
+
+            using (NetworkStream stream = client.GetStream())
+            {
+                await TcpMessageProtocol.SendCommandAsync(
+                    stream,
+                    MessageType.DownloadRequest,
+                    request.UserId.ToString(),
+                    request.FileId.ToString());
+
+                CommandMessage responseMessage = await TcpMessageProtocol.ReceiveCommandAsync(stream);
+                DownloadResponseDto? response = ParseDownloadResponse(responseMessage);
+                if (response == null || !response.Success)
+                {
+                    return response;
+                }
+
+                await ReceiveFileContentAsync(stream, savePath, response.FileSize, reportProgress);
+                return response;
+            }
+        }
+    }
+
+    // 将下载响应命令转换为下载响应对象。
+    private static DownloadResponseDto? ParseDownloadResponse(CommandMessage message)
+    {
+        if (message.Type != MessageType.DownloadResponse)
+        {
+            return new DownloadResponseDto(false, "服务端返回的不是下载响应。", 0, string.Empty, ResourceType.File, 0);
         }
 
-        await ReceiveFileContentAsync(stream, savePath, response.FileSize, reportProgress);
-        return response;
+        bool success = string.Equals(message.GetField(0), "true", StringComparison.OrdinalIgnoreCase);
+        string resultMessage = message.GetField(1);
+        int.TryParse(message.GetField(2), out int fileId);
+        Enum.TryParse(message.GetField(4), out ResourceType resourceType);
+        long.TryParse(message.GetField(5), out long fileSize);
+
+        return new DownloadResponseDto(
+            success,
+            resultMessage,
+            fileId,
+            message.GetField(3),
+            resourceType,
+            fileSize);
     }
 
     // 从本地文件读取字节并写入网络流，同时回调上传进度。
@@ -59,22 +106,24 @@ internal class ClientConnection
         byte[] buffer = new byte[FileBufferSize];
         long totalSent = 0;
 
-        await using FileStream fileStream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        while (true)
+        using (FileStream fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
-            int readCount = await fileStream.ReadAsync(buffer);
-            if (readCount == 0)
+            while (true)
             {
-                break;
-            }
+                int readCount = await fileStream.ReadAsync(buffer);
+                if (readCount == 0)
+                {
+                    break;
+                }
 
-            await stream.WriteAsync(buffer.AsMemory(0, readCount));
-            totalSent += readCount;
+                await stream.WriteAsync(buffer.AsMemory(0, readCount));
+                totalSent += readCount;
 
-            if (fileSize > 0)
-            {
-                int progress = Math.Min(100, (int)(totalSent * 100 / fileSize));
-                reportProgress?.Invoke(progress);
+                if (fileSize > 0)
+                {
+                    int progress = Math.Min(100, (int)(totalSent * 100 / fileSize));
+                    reportProgress?.Invoke(progress);
+                }
             }
         }
 
@@ -87,23 +136,25 @@ internal class ClientConnection
         byte[] buffer = new byte[FileBufferSize];
         long totalRead = 0;
 
-        await using FileStream fileStream = new(savePath, FileMode.Create, FileAccess.Write, FileShare.None);
-        while (totalRead < fileSize)
+        using (FileStream fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write, FileShare.None))
         {
-            int needRead = (int)Math.Min(buffer.Length, fileSize - totalRead);
-            int readCount = await stream.ReadAsync(buffer.AsMemory(0, needRead));
-            if (readCount == 0)
+            while (totalRead < fileSize)
             {
-                throw new EndOfStreamException("下载连接提前断开。");
-            }
+                int needRead = (int)Math.Min(buffer.Length, fileSize - totalRead);
+                int readCount = await stream.ReadAsync(buffer.AsMemory(0, needRead));
+                if (readCount == 0)
+                {
+                    throw new EndOfStreamException("下载连接提前断开。");
+                }
 
-            await fileStream.WriteAsync(buffer.AsMemory(0, readCount));
-            totalRead += readCount;
+                await fileStream.WriteAsync(buffer.AsMemory(0, readCount));
+                totalRead += readCount;
 
-            if (fileSize > 0)
-            {
-                int progress = Math.Min(100, (int)(totalRead * 100 / fileSize));
-                reportProgress?.Invoke(progress);
+                if (fileSize > 0)
+                {
+                    int progress = Math.Min(100, (int)(totalRead * 100 / fileSize));
+                    reportProgress?.Invoke(progress);
+                }
             }
         }
     }
