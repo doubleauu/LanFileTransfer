@@ -20,8 +20,8 @@ partial class Form1
     {
         components = new System.ComponentModel.Container();
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(760, 620);
-        MinimumSize = new Size(760, 620);
+        ClientSize = new Size(900, 700);
+        MinimumSize = new Size(900, 700);
         StartPosition = FormStartPosition.CenterScreen;
         Text = "局域网文件传输系统 - 客户端";
     }

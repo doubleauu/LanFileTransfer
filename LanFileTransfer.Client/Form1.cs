@@ -20,7 +20,8 @@ public partial class Form1 : Form
     private readonly Button btnRefreshFiles = new();
     private readonly Button btnDownloadFile = new();
     private readonly Button btnTransferRecords = new();
-    private readonly Label lblStatus = new();
+    private readonly Label lblCurrentUser = new();
+    private readonly Label lblProgress = new();
     private readonly ProgressBar progressTransfer = new();  // 进度条
     private readonly TextBox txtLog = new();
     private readonly DataGridView gridFiles = new();
@@ -37,30 +38,51 @@ public partial class Form1 : Form
     // 构建连接、登录、上传和日志显示相关控件。
     private void BuildConnectionUi()
     {
+        GroupBox groupConnection = new GroupBox
+        {
+            Location = new Point(24, 16),
+            Size = new Size(840, 72),
+            Text = "服务器连接"
+        };
+
+        GroupBox groupUser = new GroupBox
+        {
+            Location = new Point(24, 98),
+            Size = new Size(840, 78),
+            Text = "用户信息"
+        };
+
+        GroupBox groupActions = new GroupBox
+        {
+            Location = new Point(24, 186),
+            Size = new Size(840, 76),
+            Text = "文件操作"
+        };
+
         // 上方是服务器连接配置，后续所有请求都会使用这组 IP 和端口。
         Label lblIp = new()
         {
             AutoSize = true,
-            Location = new Point(24, 28),
+            Location = new Point(18, 31),
             Text = "服务器 IP"
         };
 
-        txtServerIp.Location = new Point(100, 24);
+        txtServerIp.Location = new Point(94, 27);
         txtServerIp.Size = new Size(160, 25);
         txtServerIp.Text = "127.0.0.1";
 
         Label lblPort = new()
         {
             AutoSize = true,
-            Location = new Point(280, 28),
+            Location = new Point(280, 31),
             Text = "端口"
         };
 
-        txtPort.Location = new Point(325, 24);
+        txtPort.Location = new Point(325, 27);
         txtPort.Size = new Size(80, 25);
         txtPort.Text = "5000";
 
-        btnConnect.Location = new Point(425, 22);
+        btnConnect.Location = new Point(430, 25);
         btnConnect.Size = new Size(120, 30);
         btnConnect.Text = "连接测试";
         btnConnect.Click += BtnConnect_Click;
@@ -68,76 +90,80 @@ public partial class Form1 : Form
         Label lblUsername = new()
         {
             AutoSize = true,
-            Location = new Point(24, 76),
+            Location = new Point(18, 33),
             Text = "用户名"
         };
 
-        txtUsername.Location = new Point(100, 72);
+        txtUsername.Location = new Point(94, 29);
         txtUsername.Size = new Size(160, 25);
 
         Label lblPassword = new()
         {
             AutoSize = true,
-            Location = new Point(280, 76),
+            Location = new Point(280, 33),
             Text = "密码"
         };
 
-        txtPassword.Location = new Point(325, 72);
+        txtPassword.Location = new Point(325, 29);
         txtPassword.Size = new Size(120, 25);
         txtPassword.UseSystemPasswordChar = true;
 
-        btnLogin.Location = new Point(465, 70);
+        btnLogin.Location = new Point(468, 27);
         btnLogin.Size = new Size(80, 30);
         btnLogin.Text = "登录";
         btnLogin.Click += BtnLogin_Click;
 
-        btnRegister.Location = new Point(465, 108);
+        btnRegister.Location = new Point(562, 27);
         btnRegister.Size = new Size(80, 30);
         btnRegister.Text = "注册";
         btnRegister.Click += BtnRegister_Click;
 
-        btnUploadFile.Location = new Point(465, 146);
-        btnUploadFile.Size = new Size(80, 30);
+        lblCurrentUser.AutoSize = true;
+        lblCurrentUser.Location = new Point(668, 33);
+        lblCurrentUser.Text = "当前用户：未登录";
+
+        btnUploadFile.Location = new Point(18, 28);
+        btnUploadFile.Size = new Size(90, 30);
         btnUploadFile.Text = "上传文件";
         btnUploadFile.Click += BtnUploadFile_Click;
 
-        btnUploadFolder.Location = new Point(560, 108);
-        btnUploadFolder.Size = new Size(90, 30);
+        btnUploadFolder.Location = new Point(124, 28);
+        btnUploadFolder.Size = new Size(100, 30);
         btnUploadFolder.Text = "上传文件夹";
         btnUploadFolder.Click += BtnUploadFolder_Click;
 
-        btnRefreshFiles.Location = new Point(560, 146);
+        btnRefreshFiles.Location = new Point(240, 28);
         btnRefreshFiles.Size = new Size(90, 30);
         btnRefreshFiles.Text = "刷新列表";
         btnRefreshFiles.Click += BtnRefreshFiles_Click;
 
-        btnDownloadFile.Location = new Point(660, 146);
-        btnDownloadFile.Size = new Size(80, 30);
+        btnDownloadFile.Location = new Point(346, 28);
+        btnDownloadFile.Size = new Size(90, 30);
         btnDownloadFile.Text = "下载文件";
         btnDownloadFile.Click += BtnDownloadFile_Click;
 
-        btnTransferRecords.Location = new Point(660, 108);
-        btnTransferRecords.Size = new Size(80, 30);
+        btnTransferRecords.Location = new Point(452, 28);
+        btnTransferRecords.Size = new Size(90, 30);
         btnTransferRecords.Text = "传输记录";
         btnTransferRecords.Click += BtnTransferRecords_Click;
 
-        lblStatus.AutoSize = true;
-        lblStatus.Location = new Point(24, 120);
-        lblStatus.Text = "状态：未连接";
+        lblProgress.AutoSize = true;
+        lblProgress.Location = new Point(24, 276);
+        lblProgress.Text = "进度：";
 
-        progressTransfer.Location = new Point(24, 148);
-        progressTransfer.Size = new Size(420, 24);
+        progressTransfer.Location = new Point(70, 272);
+        progressTransfer.Size = new Size(794, 24);
         progressTransfer.Minimum = 0;
         progressTransfer.Maximum = 100;
 
-        txtLog.Location = new Point(24, 188);
-        txtLog.Size = new Size(700, 120);
+        txtLog.Location = new Point(24, 586);
+        txtLog.Size = new Size(840, 72);
         txtLog.Multiline = true;
         txtLog.ReadOnly = true;
         txtLog.ScrollBars = ScrollBars.Vertical;
 
-        gridFiles.Location = new Point(24, 320);
-        gridFiles.Size = new Size(700, 240);
+        gridFiles.Location = new Point(24, 312);
+        gridFiles.Size = new Size(840, 260);
         gridFiles.AllowUserToAddRows = false;
         gridFiles.AllowUserToDeleteRows = false;
         gridFiles.ReadOnly = true;
@@ -146,25 +172,41 @@ public partial class Form1 : Form
         gridFiles.RowHeadersVisible = false;
         BuildFileGridColumns();
 
-        Controls.AddRange(new Control[]  // 将上面的全部控件添加到窗体中
+        groupConnection.Controls.AddRange(new Control[]
         {
             lblIp,
             txtServerIp,
             lblPort,
             txtPort,
-            btnConnect,
+            btnConnect
+        });
+
+        groupUser.Controls.AddRange(new Control[]
+        {
             lblUsername,
             txtUsername,
             lblPassword,
             txtPassword,
             btnLogin,
             btnRegister,
+            lblCurrentUser
+        });
+
+        groupActions.Controls.AddRange(new Control[]
+        {
             btnUploadFile,
             btnUploadFolder,
             btnRefreshFiles,
             btnDownloadFile,
-            btnTransferRecords,
-            lblStatus,
+            btnTransferRecords
+        });
+
+        Controls.AddRange(new Control[]  // 将上面的全部控件添加到窗体中
+        {
+            groupConnection,
+            groupUser,
+            groupActions,
+            lblProgress,
             progressTransfer,
             txtLog,
             gridFiles
@@ -208,7 +250,6 @@ public partial class Form1 : Form
                 return;
             }
 
-            lblStatus.Text = "状态：正在连接";
             await SendTestMessageAsync(serverIp, port);
         });
     }
@@ -395,7 +436,6 @@ public partial class Form1 : Form
         }
         catch (Exception ex)
         {
-            lblStatus.Text = "状态：连接失败";
             AppendLog($"连接失败：{ex.Message}");
         }
     }
@@ -440,7 +480,6 @@ public partial class Form1 : Form
         }
         catch (Exception ex)
         {
-            lblStatus.Text = "状态：文件夹上传失败";
             AppendLog($"文件夹上传失败：{ex.Message}");
             DeleteFileIfExists(zipPath);
         }
@@ -486,7 +525,6 @@ public partial class Form1 : Form
         }
         catch (Exception ex)
         {
-            lblStatus.Text = "状态：上传失败";
             AppendLog($"上传失败：{ex.Message}");
         }
         finally
@@ -517,13 +555,11 @@ public partial class Form1 : Form
         if (response.Type == MessageType.TestResponse)
         {
             TestMessageDto body = new TestMessageDto(response.GetField(0));
-            lblStatus.Text = "状态：连接测试成功";
             AppendLog($"服务端响应：{body.Content}");
             return;
         }
 
         ErrorResponseDto error = ParseErrorResponse(response);
-        lblStatus.Text = "状态：服务端返回错误";
         AppendLog($"服务端错误：{error.Message}");
     }
 
@@ -531,12 +567,12 @@ public partial class Form1 : Form
     private void ShowLoginResponse(CommandMessage response)
     {
         LoginResponseDto? body = ParseLoginResponse(response);
-        lblStatus.Text = body?.Success == true ? $"状态：已登录 {body.Username}" : "状态：登录失败";
         AppendLog($"登录结果：{body?.Message}");
 
         if (body?.Success == true)
         {
             currentUserId = body.UserId;
+            lblCurrentUser.Text = $"当前用户：{body.Username}";
         }
     }
 
@@ -544,7 +580,6 @@ public partial class Form1 : Form
     private void ShowRegisterResponse(CommandMessage response)
     {
         RegisterResponseDto? body = ParseRegisterResponse(response);
-        lblStatus.Text = body?.Success == true ? "状态：注册成功" : "状态：注册失败";
         AppendLog($"注册结果：{body?.Message}");
     }
 
@@ -552,7 +587,6 @@ public partial class Form1 : Form
     private void ShowUploadResponse(CommandMessage response)
     {
         UploadResponseDto? body = ParseUploadResponse(response);
-        lblStatus.Text = body?.Success == true ? "状态：上传成功" : "状态：上传失败";
         AppendLog($"上传结果：{body?.Message}，已传输 {body?.BytesTransferred ?? 0} 字节");
 
         if (body?.Success == true)
@@ -576,7 +610,6 @@ public partial class Form1 : Form
             if (response?.Success == true)
             {
                 progressTransfer.Value = 100;
-                lblStatus.Text = "状态：下载成功";
                 AppendLog($"下载成功：{savePath}");
 
                 if (response.ResourceType == ResourceType.FolderZip)
@@ -586,13 +619,11 @@ public partial class Form1 : Form
             }
             else
             {
-                lblStatus.Text = "状态：下载失败";
                 AppendLog($"下载失败：{response?.Message}");
             }
         }
         catch (Exception ex)
         {
-            lblStatus.Text = "状态：下载失败";
             AppendLog($"下载失败：{ex.Message}");
         }
     }
@@ -622,12 +653,10 @@ public partial class Form1 : Form
             string extractDirectory = Path.Combine(dialog.SelectedPath, Path.GetFileNameWithoutExtension(zipPath));
             Directory.CreateDirectory(extractDirectory);
             ZipFile.ExtractToDirectory(zipPath, extractDirectory, overwriteFiles: true);
-            lblStatus.Text = "状态：解压成功";
             AppendLog($"解压成功：{extractDirectory}");
         }
         catch (Exception ex)
         {
-            lblStatus.Text = "状态：解压失败";
             AppendLog($"解压失败：{ex.Message}");
         }
     }
@@ -638,7 +667,6 @@ public partial class Form1 : Form
         FileListResponseDto? body = ParseFileListResponse(response);
         if (body?.Success != true)
         {
-            lblStatus.Text = "状态：刷新列表失败";
             AppendLog($"文件列表：{body?.Message}");
             return;
         }
@@ -661,7 +689,6 @@ public partial class Form1 : Form
                 file.UploadedAt.ToString("yyyy-MM-dd HH:mm:ss"));
         }
 
-        lblStatus.Text = "状态：文件列表已刷新";
         AppendLog($"文件列表：{body.Message}，共 {body.Files.Count} 个文件");
     }
 
@@ -671,7 +698,6 @@ public partial class Form1 : Form
         TransferRecordResponseDto? body = ParseTransferRecordResponse(response);
         if (body?.Success != true)
         {
-            lblStatus.Text = "状态：刷新传输记录失败";
             AppendLog($"传输记录：{body?.Message}");
             return;
         }
@@ -696,7 +722,6 @@ public partial class Form1 : Form
                 record.FinishedAt.ToString("yyyy-MM-dd HH:mm:ss"));
         }
 
-        lblStatus.Text = "状态：传输记录已刷新";
         AppendLog($"传输记录：{body.Message}，共 {body.Records.Count} 条记录");
     }
 
