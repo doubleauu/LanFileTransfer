@@ -55,6 +55,11 @@ internal static class ClientHandler
                 {
                     await HandleDownloadAsync(message, stream, clientAddress);
                 }
+                else if (message.Type == MessageType.TransferRecordRequest)
+                {
+                    TransferRecordResponseDto response = await HandleTransferRecordsAsync(message);
+                    await SendTransferRecordResponseAsync(stream, response);
+                }
                 else
                 {
                     Console.WriteLine($"收到暂不支持的命令类型：{message.Type}");
@@ -102,6 +107,40 @@ internal static class ClientHandler
             .ToListAsync();
 
         return new FileListResponseDto(true, "文件列表刷新成功。", files);
+    }
+
+    // 查询当前用户的上传和下载记录，返回给客户端表格展示。
+    private static async Task<TransferRecordResponseDto> HandleTransferRecordsAsync(CommandMessage message)
+    {
+        int.TryParse(message.GetField(0), out int userId);
+        if (userId <= 0)
+        {
+            return new TransferRecordResponseDto(false, "请先登录后再查看传输记录。", new List<TransferRecordItemDto>());
+        }
+
+        await using LanFileTransferDbContext dbContext = ServerDatabase.CreateDbContext();
+        bool userExists = await dbContext.Users.AnyAsync(user => user.Id == userId);
+        if (!userExists)
+        {
+            return new TransferRecordResponseDto(false, "当前用户不存在，请重新登录。", new List<TransferRecordItemDto>());
+        }
+
+        List<TransferRecordItemDto> records = await dbContext.TransferRecords
+            .Where(record => record.UserId == userId)
+            .OrderByDescending(record => record.StartedAt)
+            .Select(record => new TransferRecordItemDto(
+                record.Id,
+                record.UserId,
+                record.FileId,
+                record.TransferType,
+                record.Status,
+                record.BytesTransferred,
+                record.ClientIp,
+                record.StartedAt,
+                record.FinishedAt))
+            .ToListAsync();
+
+        return new TransferRecordResponseDto(true, "传输记录刷新成功。", records);
     }
 
     // 处理单文件下载，先发送文件信息，再分块发送文件内容。
@@ -462,6 +501,30 @@ internal static class ClientHandler
         }
 
         await TcpMessageProtocol.SendCommandAsync(stream, MessageType.FileListResponse, fields.ToArray());
+    }
+
+    // 发送传输记录响应命令。
+    private static async Task SendTransferRecordResponseAsync(NetworkStream stream, TransferRecordResponseDto response)
+    {
+        List<string> fields = new List<string>();
+        fields.Add(ToProtocolBool(response.Success));
+        fields.Add(response.Message);
+        fields.Add(response.Records.Count.ToString());
+
+        foreach (TransferRecordItemDto record in response.Records)
+        {
+            fields.Add(record.Id.ToString());
+            fields.Add(record.UserId.ToString());
+            fields.Add(record.FileId.ToString());
+            fields.Add(record.TransferType.ToString());
+            fields.Add(record.Status.ToString());
+            fields.Add(record.BytesTransferred.ToString());
+            fields.Add(record.ClientIp);
+            fields.Add(record.StartedAt.ToString("O"));
+            fields.Add(record.FinishedAt.ToString("O"));
+        }
+
+        await TcpMessageProtocol.SendCommandAsync(stream, MessageType.TransferRecordResponse, fields.ToArray());
     }
 
     // 把布尔值转成协议中的小写文本。

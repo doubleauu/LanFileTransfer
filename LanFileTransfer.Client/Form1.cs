@@ -19,11 +19,13 @@ public partial class Form1 : Form
     private readonly Button btnUploadFolder = new();
     private readonly Button btnRefreshFiles = new();
     private readonly Button btnDownloadFile = new();
+    private readonly Button btnTransferRecords = new();
     private readonly Label lblStatus = new();
     private readonly ProgressBar progressTransfer = new();  // 进度条
     private readonly TextBox txtLog = new();
     private readonly DataGridView gridFiles = new();
     private int? currentUserId;
+    private bool showingTransferRecords;
 
     // 初始化窗体并创建客户端界面控件。
     public Form1()
@@ -114,6 +116,11 @@ public partial class Form1 : Form
         btnDownloadFile.Text = "下载文件";
         btnDownloadFile.Click += BtnDownloadFile_Click;
 
+        btnTransferRecords.Location = new Point(660, 108);
+        btnTransferRecords.Size = new Size(80, 30);
+        btnTransferRecords.Text = "传输记录";
+        btnTransferRecords.Click += BtnTransferRecords_Click;
+
         lblStatus.AutoSize = true;
         lblStatus.Location = new Point(24, 120);
         lblStatus.Text = "状态：未连接";
@@ -156,6 +163,7 @@ public partial class Form1 : Form
             btnUploadFolder,
             btnRefreshFiles,
             btnDownloadFile,
+            btnTransferRecords,
             lblStatus,
             progressTransfer,
             txtLog,
@@ -166,12 +174,27 @@ public partial class Form1 : Form
     // 初始化文件列表表格字段。
     private void BuildFileGridColumns()
     {
+        gridFiles.Columns.Clear();
         gridFiles.Columns.Add("FileId", "文件 ID");
         gridFiles.Columns.Add("OriginalFileName", "文件名");
         gridFiles.Columns.Add("FileSize", "大小");
         gridFiles.Columns.Add("ResourceType", "类型");
         gridFiles.Columns.Add("UploaderName", "上传者");
         gridFiles.Columns.Add("UploadedAt", "上传时间");
+    }
+
+    // 初始化传输记录表格字段。
+    private void BuildTransferRecordGridColumns()
+    {
+        gridFiles.Columns.Clear();
+        gridFiles.Columns.Add("Id", "记录 ID");
+        gridFiles.Columns.Add("FileId", "文件 ID");
+        gridFiles.Columns.Add("TransferType", "类型");
+        gridFiles.Columns.Add("Status", "状态");
+        gridFiles.Columns.Add("BytesTransferred", "字节数");
+        gridFiles.Columns.Add("ClientIp", "客户端");
+        gridFiles.Columns.Add("StartedAt", "开始时间");
+        gridFiles.Columns.Add("FinishedAt", "结束时间");
     }
 
     // 处理连接测试按钮点击，发送测试消息检查服务端是否可用。
@@ -334,6 +357,27 @@ public partial class Form1 : Form
             }
 
             await DownloadFileAsync(serverIp, port, fileId, dialog.FileName);
+        });
+    }
+
+    // 处理传输记录按钮点击，从服务端查询当前用户的上传和下载记录。
+    private async void BtnTransferRecords_Click(object? sender, EventArgs e)
+    {
+        await RunWithButtonsDisabledAsync(async () =>
+        {
+            if (currentUserId == null)
+            {
+                AppendLog("请先登录后再查看传输记录。");
+                return;
+            }
+
+            if (!TryGetServer(out string serverIp, out int port))
+            {
+                return;
+            }
+
+            CommandMessage response = await clientConnection.SendCommandAsync(serverIp, port, MessageType.TransferRecordRequest, currentUserId.Value.ToString());
+            ShowTransferRecordResponse(response);
         });
     }
 
@@ -600,6 +644,12 @@ public partial class Form1 : Form
         }
 
         gridFiles.Rows.Clear();
+        if (showingTransferRecords)
+        {
+            BuildFileGridColumns();
+            showingTransferRecords = false;
+        }
+
         foreach (FileListItemDto file in body.Files)
         {
             gridFiles.Rows.Add(
@@ -613,6 +663,41 @@ public partial class Form1 : Form
 
         lblStatus.Text = "状态：文件列表已刷新";
         AppendLog($"文件列表：{body.Message}，共 {body.Files.Count} 个文件");
+    }
+
+    // 将服务端返回的传输记录填充到表格。
+    private void ShowTransferRecordResponse(CommandMessage response)
+    {
+        TransferRecordResponseDto? body = ParseTransferRecordResponse(response);
+        if (body?.Success != true)
+        {
+            lblStatus.Text = "状态：刷新传输记录失败";
+            AppendLog($"传输记录：{body?.Message}");
+            return;
+        }
+
+        if (!showingTransferRecords)
+        {
+            BuildTransferRecordGridColumns();
+            showingTransferRecords = true;
+        }
+
+        gridFiles.Rows.Clear();
+        foreach (TransferRecordItemDto record in body.Records)
+        {
+            gridFiles.Rows.Add(
+                record.Id,
+                record.FileId,
+                record.TransferType,
+                record.Status,
+                record.BytesTransferred,
+                record.ClientIp,
+                record.StartedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+                record.FinishedAt.ToString("yyyy-MM-dd HH:mm:ss"));
+        }
+
+        lblStatus.Text = "状态：传输记录已刷新";
+        AppendLog($"传输记录：{body.Message}，共 {body.Records.Count} 条记录");
     }
 
     // 解析登录响应命令。
@@ -698,6 +783,39 @@ public partial class Form1 : Form
         return new FileListResponseDto(success, message, files);
     }
 
+    // 解析传输记录响应命令。
+    private static TransferRecordResponseDto? ParseTransferRecordResponse(CommandMessage response)
+    {
+        if (response.Type != MessageType.TransferRecordResponse)
+        {
+            return new TransferRecordResponseDto(false, "服务端返回的不是传输记录响应。", new List<TransferRecordItemDto>());
+        }
+
+        bool success = IsProtocolTrue(response.GetField(0));
+        string message = response.GetField(1);
+        int.TryParse(response.GetField(2), out int recordCount);
+        List<TransferRecordItemDto> records = new List<TransferRecordItemDto>();
+
+        int index = 3;
+        for (int i = 0; i < recordCount && index + 8 < response.Fields.Count; i++)
+        {
+            int.TryParse(response.GetField(index), out int id);
+            int.TryParse(response.GetField(index + 1), out int userId);
+            int.TryParse(response.GetField(index + 2), out int fileId);
+            Enum.TryParse(response.GetField(index + 3), out TransferType transferType);
+            Enum.TryParse(response.GetField(index + 4), out TransferStatus status);
+            long.TryParse(response.GetField(index + 5), out long bytesTransferred);
+            string clientIp = response.GetField(index + 6);
+            DateTime.TryParse(response.GetField(index + 7), out DateTime startedAt);
+            DateTime.TryParse(response.GetField(index + 8), out DateTime finishedAt);
+
+            records.Add(new TransferRecordItemDto(id, userId, fileId, transferType, status, bytesTransferred, clientIp, startedAt, finishedAt));
+            index += 9;
+        }
+
+        return new TransferRecordResponseDto(success, message, records);
+    }
+
     // 解析错误响应命令。
     private static ErrorResponseDto ParseErrorResponse(CommandMessage response)
     {
@@ -764,6 +882,12 @@ public partial class Form1 : Form
             return false;
         }
 
+        if (showingTransferRecords)
+        {
+            AppendLog("当前显示的是传输记录，请先刷新文件列表后再下载。");
+            return false;
+        }
+
         object? fileIdValue = gridFiles.CurrentRow.Cells["FileId"].Value;
         object? fileNameValue = gridFiles.CurrentRow.Cells["OriginalFileName"].Value;
         object? resourceTypeValue = gridFiles.CurrentRow.Cells["ResourceType"].Value;
@@ -826,6 +950,7 @@ public partial class Form1 : Form
         btnUploadFolder.Enabled = false;
         btnRefreshFiles.Enabled = false;
         btnDownloadFile.Enabled = false;
+        btnTransferRecords.Enabled = false;
 
         try
         {
@@ -840,6 +965,7 @@ public partial class Form1 : Form
             btnUploadFolder.Enabled = true;
             btnRefreshFiles.Enabled = true;
             btnDownloadFile.Enabled = true;
+            btnTransferRecords.Enabled = true;
         }
     }
 
