@@ -317,7 +317,7 @@ public partial class Form1 : Form
                 return;
             }
 
-            if (!TryGetServer(out string serverIp, out int port) || !TryGetSelectedFile(out int fileId, out string fileName))
+            if (!TryGetServer(out string serverIp, out int port) || !TryGetSelectedFile(out int fileId, out string fileName, out ResourceType resourceType))
             {
                 return;
             }
@@ -325,7 +325,7 @@ public partial class Form1 : Form
             using SaveFileDialog dialog = new()
             {
                 Title = "保存下载文件",
-                FileName = fileName
+                FileName = GetDownloadFileName(fileName, resourceType)
             };
 
             if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -454,6 +454,7 @@ public partial class Form1 : Form
         }
     }
 
+    // 上传成功后自动刷新文件列表。
     private async Task RefreshFileListAfterUploadAsync(string serverIp, int port)
     {
         if (currentUserId == null)
@@ -516,6 +517,7 @@ public partial class Form1 : Form
         }
     }
 
+    // 下载选中的文件，若下载的是文件夹 ZIP，则提供解压选项。
     private async Task DownloadFileAsync(string serverIp, int port, int fileId, string savePath)
     {
         try
@@ -532,6 +534,11 @@ public partial class Form1 : Form
                 progressTransfer.Value = 100;
                 lblStatus.Text = "状态：下载成功";
                 AppendLog($"下载成功：{savePath}");
+
+                if (response.ResourceType == ResourceType.FolderZip)
+                {
+                    ExtractFolderZipIfNeeded(savePath);
+                }
             }
             else
             {
@@ -543,6 +550,41 @@ public partial class Form1 : Form
         {
             lblStatus.Text = "状态：下载失败";
             AppendLog($"下载失败：{ex.Message}");
+        }
+    }
+
+    // 文件夹 ZIP 下载完成后询问是否解压。
+    private void ExtractFolderZipIfNeeded(string zipPath)
+    {
+        DialogResult result = MessageBox.Show(this, "文件夹 ZIP 已下载，是否现在解压？", "解压文件夹", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (result != DialogResult.Yes)
+        {
+            return;
+        }
+
+        using FolderBrowserDialog dialog = new FolderBrowserDialog
+        {
+            Description = "选择解压保存位置",
+            UseDescriptionForTitle = true
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            string extractDirectory = Path.Combine(dialog.SelectedPath, Path.GetFileNameWithoutExtension(zipPath));
+            Directory.CreateDirectory(extractDirectory);
+            ZipFile.ExtractToDirectory(zipPath, extractDirectory, overwriteFiles: true);
+            lblStatus.Text = "状态：解压成功";
+            AppendLog($"解压成功：{extractDirectory}");
+        }
+        catch (Exception ex)
+        {
+            lblStatus.Text = "状态：解压失败";
+            AppendLog($"解压失败：{ex.Message}");
         }
     }
 
@@ -698,11 +740,23 @@ public partial class Form1 : Form
         }
     }
 
-    // 尝试从表格当前行读取文件 ID 和文件名。
-    private bool TryGetSelectedFile(out int fileId, out string fileName)
+    // 根据资源类型生成默认下载文件名。
+    private static string GetDownloadFileName(string fileName, ResourceType resourceType)
+    {
+        if (resourceType == ResourceType.FolderZip && !fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{fileName}.zip";
+        }
+
+        return fileName;
+    }
+
+    // 尝试从表格当前行读取文件 ID、文件名和资源类型。
+    private bool TryGetSelectedFile(out int fileId, out string fileName, out ResourceType resourceType)
     {
         fileId = 0;
         fileName = string.Empty;
+        resourceType = ResourceType.File;
 
         if (gridFiles.CurrentRow == null)
         {
@@ -712,14 +766,16 @@ public partial class Form1 : Form
 
         object? fileIdValue = gridFiles.CurrentRow.Cells["FileId"].Value;
         object? fileNameValue = gridFiles.CurrentRow.Cells["OriginalFileName"].Value;
+        object? resourceTypeValue = gridFiles.CurrentRow.Cells["ResourceType"].Value;
 
-        if (fileIdValue == null || !int.TryParse(fileIdValue.ToString(), out fileId) || fileNameValue == null)
+        if (fileIdValue == null || !int.TryParse(fileIdValue.ToString(), out fileId) || fileNameValue == null || resourceTypeValue == null)
         {
             AppendLog("选中文件信息不完整。");
             return false;
         }
 
         fileName = fileNameValue.ToString() ?? "download.dat";
+        Enum.TryParse(resourceTypeValue.ToString(), out resourceType);
         return true;
     }
 
