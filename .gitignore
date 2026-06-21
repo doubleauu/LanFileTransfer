@@ -1,8 +1,5 @@
-/AGENTS.md
-/agents.md
-/开发文档.md
-/开发规划.md
-/教学ppt总结.md
+*.md
+!README.md
 
 bin/
 obj/
@@ -12,3 +9,4 @@ obj/
 *.db-shm
 *.db-wal
 *.baiduyun.uploading.cfg
+natpierce-win-v1.06/
