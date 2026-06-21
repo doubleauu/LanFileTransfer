@@ -11,9 +11,9 @@ internal class Program
     // 初始化数据库并启动 TCP 监听循环。
     private static async Task Main(string[] args)
     {
-        ServerDatabase.InitializeDatabase();
+        ServerDatabase.InitializeDatabase();  // 初始化数据库
 
-        int port = GetPort(args);
+        int port = GetPort(args);   // 获取命令行中的指定端口
         TcpListener listener = new(IPAddress.Any, port);
 
         listener.Start();
@@ -22,7 +22,8 @@ internal class Program
 
         while (true)
         {
-            TcpClient client = await listener.AcceptTcpClientAsync();
+            TcpClient client = await listener.AcceptTcpClientAsync();  // 异步等待每一个客户端
+            // 多线程 Task 处理每一个客户端且不等待，使得支持多客户端同时连接（放到线程池中，默认后台线程）
             _ = Task.Run(() => ClientHandler.HandleClientAsync(client));
         }
     }

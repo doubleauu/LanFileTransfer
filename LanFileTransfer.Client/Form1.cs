@@ -169,7 +169,7 @@ public partial class Form1 : Form
         gridFiles.ReadOnly = true;
         gridFiles.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         gridFiles.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-        gridFiles.RowHeadersVisible = false;
+        gridFiles.RowHeadersVisible = false;  // 默认不可视
         BuildFileGridColumns();
 
         groupConnection.Controls.AddRange(new Control[]
@@ -304,16 +304,19 @@ public partial class Form1 : Form
                 return;
             }
 
+            // 创建一个文件选择窗口
             using OpenFileDialog dialog = new()
             {
                 Title = "选择要上传的文件"
             };
 
+            // 以模态窗口打开，用户没有确认则直接退出
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
             }
 
+            // 第三个参数为完整文件路径
             await UploadFileAsync(serverIp, port, dialog.FileName);
         });
     }
@@ -432,7 +435,7 @@ public partial class Form1 : Form
             AppendLog($"正在连接 {serverIp}:{port} ...");
             CommandMessage response = await clientConnection.SendCommandAsync(serverIp, port, MessageType.TestRequest, testMessage);
             AppendLog($"已发送：{MessageType.TestRequest}");
-            ShowServerResponse(response);  // 服务端返回接受状态并输出
+            ShowServerResponse(response);  // 客户端接受服务端返回状态并输出
         }
         catch (Exception ex)
         {
@@ -458,13 +461,15 @@ public partial class Form1 : Form
     private async Task UploadFolderAsync(string serverIp, int port, string folderPath)
     {
         string folderName = new DirectoryInfo(folderPath).Name;
+        // 创建临时缓存文件夹，combine用来拼接路径
         string tempDirectory = Path.Combine(Path.GetTempPath(), "LanFileTransfer");
         Directory.CreateDirectory(tempDirectory);
-
+        // 使用GUID标识，防止文件名重复
         string zipPath = Path.Combine(tempDirectory, $"{folderName}_{Guid.NewGuid():N}.zip");
         try
         {
             AppendLog($"正在压缩文件夹：{folderName}");
+            // 压缩文件夹：
             ZipFile.CreateFromDirectory(folderPath, zipPath, CompressionLevel.Fastest, includeBaseDirectory: true);
 
             await UploadResourceAsync(
@@ -629,7 +634,7 @@ public partial class Form1 : Form
         DialogResult result = MessageBox.Show(this, "文件夹 ZIP 已下载，是否现在解压？", "解压文件夹", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (result != DialogResult.Yes)
         {
-            return;
+            return;  // 不解压直接退出
         }
 
         using FolderBrowserDialog dialog = new FolderBrowserDialog
@@ -645,8 +650,10 @@ public partial class Form1 : Form
 
         try
         {
+            // 创建压缩包目录：用户选择目录 + 不带拓展名的文件夹名称
             string extractDirectory = Path.Combine(dialog.SelectedPath, Path.GetFileNameWithoutExtension(zipPath));
             Directory.CreateDirectory(extractDirectory);
+            // 目标解压目录，如果存在就覆盖
             ZipFile.ExtractToDirectory(zipPath, extractDirectory, overwriteFiles: true);
             AppendLog($"解压成功：{extractDirectory}");
         }

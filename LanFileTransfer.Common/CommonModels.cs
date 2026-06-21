@@ -25,7 +25,7 @@ namespace LanFileTransfer.Common
     public enum ResourceType
     {
         File,
-        FolderZip   // 保留文件夹内部目录
+        FolderZip   // 文件夹传输使用压缩包，操作简单还方便保留文件夹内部目录
     }
 
     // 传输类型用于保存上传或下载历史。

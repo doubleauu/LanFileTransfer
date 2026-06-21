@@ -11,7 +11,7 @@ namespace LanFileTransfer.Server;
 internal static class ClientHandler
 {
     private const int FileBufferSize = 64 * 1024;
-    private static readonly string StorageRoot = Path.Combine(AppContext.BaseDirectory, "ServerStorage");
+    private static readonly string StorageRoot = Path.Combine(AppContext.BaseDirectory, "ServerStorage");  // 服务端存放源文件的目录
 
     // 处理单个客户端连接，根据命令类型分发到对应业务逻辑。
     public static async Task HandleClientAsync(TcpClient client)
@@ -338,6 +338,7 @@ internal static class ClientHandler
                 return;
             }
 
+            // 先将文件从临时目录中移动到目标目录，然后在数据库中加上上传记录
             File.Move(tempFilePath, finalFilePath, overwrite: false);
 
             FileRecord fileRecord = new FileRecord
@@ -471,7 +472,8 @@ internal static class ClientHandler
     // 对密码做 SHA256 哈希，避免直接保存明文密码。
     private static string HashPassword(string password)
     {
+        // 哈希算法处理的式字节而非字符串，所有要进行两次转换，哈希不可逆
         byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(password));
-        return Convert.ToHexString(bytes);
+        return Convert.ToHexString(bytes);  // 转换为十六进制字符串
     }
 }
