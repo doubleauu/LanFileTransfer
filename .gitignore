@@ -1,5 +1,6 @@
-*.md
-!README.md
+/AGENTS.md
+/agents.md
+/小组分工.md
 
 bin/
 obj/
@@ -9,3 +10,5 @@ obj/
 *.db-shm
 *.db-wal
 *.baiduyun.uploading.cfg
+
+答辩PPT/
